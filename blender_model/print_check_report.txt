@@ -1,0 +1,43 @@
+SeeSpeak print check  |  ผลรวม: ผ่านทั้งหมด
+ขนาดตัวเครื่อง 64.0 x 24.0 x 27.0 มม. (+กรอบกล้อง 1.6), ผนัง 1.8 มม.
+
+=== 1) ความสมบูรณ์ของ mesh (watertight / manifold) ===
+OK  1_Body_Main: non-manifold=0, boundary=0, shells=1, volume=9.39 cm3, PLA≈11.6 g
+OK  2_Side_Lid: non-manifold=0, boundary=0, shells=6, volume=3.71 cm3, PLA≈4.6 g
+OK  3_Button: non-manifold=0, boundary=0, shells=1, volume=0.31 cm3, PLA≈0.4 g
+OK  4_Slide_Knob: non-manifold=0, boundary=0, shells=1, volume=0.07 cm3, PLA≈0.1 g
+OK  5_Glasses_Mount_Plate: non-manifold=0, boundary=0, shells=1, volume=1.52 cm3, PLA≈1.9 g
+
+=== 2) ตรวจการชนกันของชิ้นพิมพ์ (ตำแหน่งประกอบ) ===
+OK  ตัวเครื่อง × ฝาข้าง: ชนกัน 0.000 mm3
+OK  ตัวเครื่อง × ปุ่มกด: ชนกัน 0.000 mm3
+OK  ตัวเครื่อง × ปุ่มสไลด์ (OFF): ชนกัน 0.000 mm3
+OK  ตัวเครื่อง × ปุ่มสไลด์ (ON): ชนกัน 0.000 mm3
+OK  ฝาข้าง × แผ่นยึดขาแว่น: ชนกัน 0.000 mm3
+
+=== 3) ตรวจว่าอุปกรณ์จริงใส่ได้ ไม่ชนตัวเครื่อง/ฝา/ปุ่ม ===
+OK  OV5640 camera
+OK  XIAO ESP32S3 Sense
+OK  Tactile switch
+OK  Tactile actuator
+OK  SS-12D00 body
+OK  SS-12D00 lever (OFF)
+OK  SS-12D00 lever (ON)
+OK  Speaker 20mm
+OK  Vibration motor
+OK  Battery 401030
+OK  MAX98357A
+OK  Magnet 1
+OK  Magnet 2
+
+=== 4) ตรวจอุปกรณ์ชนกันเอง ===
+OK  ไม่มีอุปกรณ์ชนกัน
+
+=== 5) Overhang (> 45° ในทิศพิมพ์, ไม่รวมผิวติดฐาน 0.6 มม. แรก) ===
+1_Body_Main: พื้นที่ overhang ≈ 384.3 mm2
+2_Side_Lid: พื้นที่ overhang ≈ 633.5 mm2
+3_Button: พื้นที่ overhang ≈ 0.0 mm2
+4_Slide_Knob: พื้นที่ overhang ≈ 0.0 mm2
+5_Glasses_Mount_Plate: พื้นที่ overhang ≈ 0.0 mm2
+
+STL: c:\Users\NEWSOYES\Desktop\แข่งสิ่งประดิษ\blender_model\stl_print
