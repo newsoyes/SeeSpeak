@@ -55,7 +55,7 @@
 // ----------------------------------------------------------------------------
 const char* DEFAULT_WIFI_SSID      = "SeeSpeak_Hotspot";
 const char* DEFAULT_WIFI_PASSWORD  = "12345678";
-const char* DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6KDvoZSxYCHmEmdCQFLbCR9ew8fSG8u-d6yqYNq3IqmxQ";
+const char* DEFAULT_GEMINI_API_KEY = "YOUR_GEMINI_API_KEY";
 
 const char* SETUP_AP_NAME = "SeeSpeak-Setup"; // ชื่อ Wi-Fi ที่แว่นปล่อยออกมาตอนตั้งค่า
 
