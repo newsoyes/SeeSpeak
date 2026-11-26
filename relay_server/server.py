@@ -3,10 +3,11 @@ SeeSpeak V3 — Edge-to-Cloud Binary Relay Server (Architecture 2B)
 =================================================================
 ทำหน้าที่เป็น "ล่ามตัวกลางความเร็วสูง" ระหว่างแว่นตา XIAO ESP32S3 Sense กับ Google Gemini Live API:
 - เสียงผู้หญิงวัยรุ่นน่ารัก สดใส เป็นกันเอง (ค่าเริ่มต้น: Laomedeia — ปรับผ่าน GEMINI_VOICE_NAME ได้)
+- Seamless Upstream Auto-Resume (v3.6.0): หากฝั่ง Google ปิดท่อชั่วคราว (เช่น ครบ 10 นาที หรือสะดุด)
+  เซิร์ฟเวอร์จะต่อท่อ Gemini ใหม่พร้อม Session Resumption ภายใน ~0.3 วิ โดย **ไม่ตัดการเชื่อมต่อแว่น ESP32** และยังจำบทสนทนาเดิมได้!
 - ตอบเร็วสุด: 6 แพ็กเก็ตแรก (384 ms) ส่งทันที 0 ms ไม่หน่วง แล้วคุมจังหวะส่งที่ 1.14x (56 ms/64 ms)
   เพื่อรองรับการพูดประโยคยาวมาก (เช่น ท่อง ก-ฮ หรืออ่านฉลากยา) โดยไม่ล้นบัฟเฟอร์และไม่เร่งสปีด!
 - รองรับคำสั่งหยุดพูดกลางคัน (MSG_ESP_CANCEL_AI = 0x06) ทั้งจากการพูดแทรก ("หยุดๆ/พอๆ") และการกดปุ่ม 1 ครั้ง
-  โดยล้างคิวเสียงที่ค้างอยู่และทิ้งแพ็กเก็ตที่เหลือของเทิร์นนั้นทันที ไม่มีเสียงรั่วตามมา
 - มีระบบ Keepalive ส่งเสียงเงียบ 100ms ทุก 18 วินาที กัน Gemini ตัดสายเมื่อเงียบเกิน 1 นาที (1008 inactivity)
 - มีหน้า /test-key สำหรับตรวจสอบว่า GEMINI_API_KEY บน Render.com เชื่อมต่อ Gemini Live API ได้จริงทันที
 """
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("seespeak-relay")
 
-app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.5.0")
+app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.6.0")
 
 # ---------------------------------------------------------------------------
 # ค่าตั้งต้นจาก Environment Variables (ตั้งบน Render / Cloud Run เพื่อซ่อน API Key อย่างปลอดภัย)
@@ -95,6 +96,7 @@ runtime_state = {
     "images_forwarded": 0,
     "turns_completed": 0,
     "cancels_handled": 0,
+    "upstream_resumes": 0,
     "keepalives_sent": 0,
     "audio_chunks_sent_to_esp": 0,
 }
@@ -114,23 +116,31 @@ def downsample_24k_to_16k(pcm24k_bytes: bytes) -> bytes:
     return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
 
 
-async def connect_gemini_live(api_key: str):
-    """เชื่อมต่อ Gemini Live API พร้อมสลับโมเดลสำรองอัตโนมัติ (หยุดทันทีหาก API Key ไม่ถูกต้อง)"""
+async def connect_gemini_live(api_key: str, resume_handle: Optional[str] = None):
+    """เชื่อมต่อ Gemini Live API (รองรับ Session Resumption เพื่อต่อท่อเดิมโดยไม่เสียความจำ)"""
     last_error: Optional[Exception] = None
     url = f"{GEMINI_LIVE_WS_URL}?key={api_key}"
 
-    for model_name in LIVE_MODEL_CANDIDATES:
-        ws = None
-        try:
-            logger.info("กำลังเชื่อมต่อ Gemini Live API รุ่น: %s (เสียง: %s)", model_name, GEMINI_VOICE_NAME)
-            ws = await websockets.connect(
-                url,
-                max_size=8 * 1024 * 1024,
-                ping_interval=20,
-                ping_timeout=20,
-            )
-            setup_payload = {
-                "setup": {
+    # หากมี resume_handle ให้ลองต่อเซสชันเดิมก่อน ถ้าไม่สำเร็จค่อยเปิดเซสชันใหม่สะอาด
+    handles_to_try = [resume_handle, None] if resume_handle else [None]
+
+    for handle in handles_to_try:
+        for model_name in LIVE_MODEL_CANDIDATES:
+            ws = None
+            try:
+                logger.info(
+                    "กำลังเชื่อมต่อ Gemini Live API รุ่น: %s (เสียง: %s%s)",
+                    model_name,
+                    GEMINI_VOICE_NAME,
+                    ", resume" if handle else "",
+                )
+                ws = await websockets.connect(
+                    url,
+                    max_size=8 * 1024 * 1024,
+                    ping_interval=20,
+                    ping_timeout=20,
+                )
+                setup_inner = {
                     "model": model_name,
                     "generationConfig": {
                         "responseModalities": ["AUDIO"],
@@ -151,36 +161,36 @@ async def connect_gemini_live(api_key: str):
                         }
                     },
                     "outputAudioTranscription": {},
+                    "sessionResumption": {"handle": handle} if handle else {},
                 }
-            }
-            await ws.send(json.dumps(setup_payload, ensure_ascii=False))
-            raw_ack = await asyncio.wait_for(ws.recv(), timeout=8.0)
-            ack = json.loads(raw_ack)
-            if "setupComplete" in ack:
-                logger.info("เชื่อมต่อ Gemini Live API สำเร็จ (%s)!", model_name)
-                runtime_state["last_active_model"] = model_name
-                runtime_state["last_error"] = None
-                runtime_state["hint"] = "พร้อมใช้งานปกติ"
-                return ws, model_name
-            logger.warning("โมเดล %s ตอบกลับไม่คาดคิด: %s", model_name, str(ack)[:200])
-            await ws.close()
-        except Exception as exc:
-            last_error = exc
-            err_text = str(exc)
-            runtime_state["last_error"] = f"{model_name}: {err_text}"
-            logger.warning("โมเดล %s เชื่อมต่อไม่สำเร็จ: %s", model_name, exc)
-            if ws is not None:
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
-            if "API key not valid" in err_text or "API_KEY_INVALID" in err_text:
-                runtime_state["hint"] = (
-                    "GEMINI_API_KEY ไม่ถูกต้องหรือถูกระงับ — "
-                    "กรุณาสร้าง API Key ใหม่จาก https://aistudio.google.com/apikey "
-                    "แล้วนำไปใส่ใน Render.com -> Environment -> GEMINI_API_KEY"
-                )
-                break
+                await ws.send(json.dumps({"setup": setup_inner}, ensure_ascii=False))
+                raw_ack = await asyncio.wait_for(ws.recv(), timeout=8.0)
+                ack = json.loads(raw_ack)
+                if "setupComplete" in ack:
+                    logger.info("เชื่อมต่อ Gemini Live API สำเร็จ (%s)!", model_name)
+                    runtime_state["last_active_model"] = model_name
+                    runtime_state["last_error"] = None
+                    runtime_state["hint"] = "พร้อมใช้งานปกติ"
+                    return ws, model_name
+                logger.warning("โมเดล %s ตอบกลับไม่คาดคิด: %s", model_name, str(ack)[:200])
+                await ws.close()
+            except Exception as exc:
+                last_error = exc
+                err_text = str(exc)
+                runtime_state["last_error"] = f"{model_name}: {err_text}"
+                logger.warning("โมเดล %s เชื่อมต่อไม่สำเร็จ: %s", model_name, exc)
+                if ws is not None:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                if "API key not valid" in err_text or "API_KEY_INVALID" in err_text:
+                    runtime_state["hint"] = (
+                        "GEMINI_API_KEY ไม่ถูกต้องหรือถูกระงับ — "
+                        "กรุณาสร้าง API Key ใหม่จาก https://aistudio.google.com/apikey "
+                        "แล้วนำไปใส่ใน Render.com -> Environment -> GEMINI_API_KEY"
+                    )
+                    raise RuntimeError(f"API key ไม่ถูกต้อง: {last_error}")
 
     raise RuntimeError(f"ไม่สามารถเชื่อมต่อโมเดล Gemini Live API ตัวใดได้เลย: {last_error}")
 
@@ -191,7 +201,7 @@ async def health_check():
     return JSONResponse(
         {
             "status": "ok",
-            "version": "3.5.0",
+            "version": "3.6.0",
             "service": "SeeSpeak V3 Gemini Live Relay (2B)",
             "api_key_configured": bool(GEMINI_API_KEY),
             "voice": GEMINI_VOICE_NAME,
@@ -247,7 +257,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
     logger.info("แว่น SeeSpeak ขอเชื่อมต่อเข้ามา (%s) -> กำลังเปิดท่อ Gemini Live...", esp_ws.client)
 
     try:
-        gemini_ws, active_model = await connect_gemini_live(api_key)
+        initial_ws, active_model = await connect_gemini_live(api_key)
     except Exception as exc:
         runtime_state["last_error"] = str(exc)
         logger.error("เปิดเซสชัน Gemini Live ไม่สำเร็จ: %s", exc)
@@ -257,12 +267,20 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
     await esp_ws.accept()
     logger.info("เปิดท่อคุยสด SeeSpeak <-> %s (เสียง %s) เรียบร้อยแล้ว!", active_model, GEMINI_VOICE_NAME)
 
+    # เก็บสถานะท่อ Gemini ฝั่งเซิร์ฟเวอร์เพื่อให้สลับต่อใหม่ได้แบบไร้รอยต่อโดยไม่ตัดสายแว่น!
+    session = {
+        "ws": initial_ws,
+        "model": active_model,
+        "handle": None,
+    }
+    esp_closed = asyncio.Event()
     jpeg_buffer = bytearray()
     ai_is_speaking = False
     user_activity_open = False
     drop_current_turn_audio = False
     last_gemini_send_ts = time.monotonic()
     gemini_send_lock = asyncio.Lock()
+    gemini_reconnect_lock = asyncio.Lock()
 
     # คิวส่งเสียงขนาดใหญ่ (~160 วินาทีของเสียง 16kHz) เพื่อรองรับคำตอบยาวๆ เช่น ก-ฮ ได้สบายๆ
     outbound_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2500)
@@ -277,17 +295,55 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 break
         return drained
 
+    async def reconnect_upstream(reason: str) -> bool:
+        """ต่อท่อ Gemini Live ใหม่เงียบๆ ภายในเซิร์ฟเวอร์โดยไม่ตัดสายแว่น ESP32"""
+        nonlocal user_activity_open, ai_is_speaking, drop_current_turn_audio
+        async with gemini_reconnect_lock:
+            if esp_closed.is_set():
+                return False
+            old_ws = session["ws"]
+            if old_ws is not None:
+                try:
+                    await old_ws.close()
+                except Exception:
+                    pass
+                session["ws"] = None
+            logger.warning("ท่อ Gemini สะดุด (%s) -> กำลังต่อใหม่อัตโนมัติแบบไม่ตัดสายแว่น...", reason)
+            for attempt in range(3):
+                if esp_closed.is_set():
+                    return False
+                try:
+                    new_ws, new_model = await connect_gemini_live(api_key, resume_handle=session["handle"])
+                    session["ws"] = new_ws
+                    session["model"] = new_model
+                    user_activity_open = False
+                    ai_is_speaking = False
+                    drop_current_turn_audio = False
+                    runtime_state["upstream_resumes"] += 1
+                    logger.info("ต่อท่อ Gemini ใหม่สำเร็จแบบไร้รอยต่อ (%s)!", new_model)
+                    return True
+                except Exception as exc:
+                    logger.warning("ลองต่อท่อ Gemini ใหม่ครั้งที่ %d ไม่สำเร็จ: %s", attempt + 1, exc)
+                    await asyncio.sleep(0.5)
+            return False
+
     async def send_gemini_json(payload: dict):
         nonlocal last_gemini_send_ts
         async with gemini_send_lock:
-            await gemini_ws.send(json.dumps(payload, ensure_ascii=False))
-            last_gemini_send_ts = time.monotonic()
+            ws = session["ws"]
+            if ws is None:
+                return
+            try:
+                await ws.send(json.dumps(payload, ensure_ascii=False))
+                last_gemini_send_ts = time.monotonic()
+            except Exception as exc:
+                logger.warning("send_gemini_json พบสายหลุด: %s -> รอท่อใหม่", exc)
 
     async def esp_to_gemini():
         """รับเสียง PCM ดิบ, ภาพ JPEG, และสัญญาณหยุดพูด (0x06) จากแว่น ESP32-S3"""
         nonlocal user_activity_open, ai_is_speaking, drop_current_turn_audio
         try:
-            while True:
+            while not esp_closed.is_set():
                 msg = await esp_ws.receive()
                 if msg["type"] == "websocket.disconnect":
                     break
@@ -299,7 +355,6 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 payload = data[1:]
 
                 if opcode == MSG_ESP_CANCEL_AI:
-                    # ผู้ใช้พูดแทรก ("หยุดๆ/พอๆ") หรือกดปุ่ม 1 ครั้ง -> ล้างคิวและหยุดเสียงเทิร์นนี้ทันที!
                     drained = drain_outbound_queue()
                     drop_current_turn_audio = True
                     ai_is_speaking = False
@@ -310,7 +365,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 elif opcode == MSG_ESP_AUDIO_PCM and payload:
                     if not user_activity_open:
                         user_activity_open = True
-                        drop_current_turn_audio = False  # เทิร์นใหม่เริ่มแล้ว เปิดรับเสียงตอบใหม่
+                        drop_current_turn_audio = False
                         await send_gemini_json({"realtimeInput": {"activityStart": {}}})
                     audio_b64 = base64.b64encode(payload).decode("ascii")
                     await send_gemini_json(
@@ -334,7 +389,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                     if len(jpeg_buffer) > 500:
                         img_b64 = base64.b64encode(bytes(jpeg_buffer)).decode("ascii")
                         runtime_state["images_forwarded"] += 1
-                        logger.info("ส่งภาพกล้องสด (%d bytes) ขึ้น %s", len(jpeg_buffer), active_model)
+                        logger.info("ส่งภาพกล้องสด (%d bytes) ขึ้น %s", len(jpeg_buffer), session["model"])
                         await send_gemini_json(
                             {
                                 "realtimeInput": {
@@ -352,75 +407,107 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                         user_activity_open = False
                         drop_current_turn_audio = False
                         await send_gemini_json({"realtimeInput": {"activityEnd": {}}})
-                        logger.info("ผู้ใช้พูดจบ -> ส่ง activityEnd ให้ %s ตอบเสียงสดทันที", active_model)
+                        logger.info("ผู้ใช้พูดจบ -> ส่ง activityEnd ให้ %s ตอบเสียงสดทันที", session["model"])
 
         except WebSocketDisconnect:
             logger.info("แว่น SeeSpeak ตัดการเชื่อมต่อ")
         except Exception as exc:
             runtime_state["last_error"] = f"esp_to_gemini: {exc}"
             logger.warning("esp_to_gemini หยุดทำงาน: %s", exc)
+        finally:
+            esp_closed.set()
 
     async def gemini_to_queue():
-        """อ่านข้อมูลจาก Gemini Live API เต็มความเร็วแล้วเก็บลงคิว (ท่อ Google จะไม่ติดค้างแม้ประโยคยาว)"""
+        """อ่านข้อมูลจาก Gemini Live API เต็มความเร็ว พร้อม Auto-Resume อัตโนมัติหากท่อ Google ปิดชั่วคราว"""
         nonlocal ai_is_speaking, drop_current_turn_audio
         current_reply_parts = []
-        try:
-            async for raw_msg in gemini_ws:
-                if isinstance(raw_msg, bytes):
-                    raw_msg = raw_msg.decode("utf-8", errors="ignore")
-                packet = json.loads(raw_msg)
-                server_content = packet.get("serverContent")
-                if not server_content:
-                    continue
+        while not esp_closed.is_set():
+            ws = session["ws"]
+            if ws is None:
+                ok = await reconnect_upstream("no active upstream")
+                if not ok:
+                    break
+                continue
+            try:
+                async for raw_msg in ws:
+                    if esp_closed.is_set():
+                        break
+                    if isinstance(raw_msg, bytes):
+                        raw_msg = raw_msg.decode("utf-8", errors="ignore")
+                    packet = json.loads(raw_msg)
 
-                out_tr = server_content.get("outputTranscription")
-                if out_tr and out_tr.get("text"):
-                    current_reply_parts.append(out_tr["text"])
+                    # เก็บ sessionResumption handle ล่าสุดไว้ต่อความจำอัตโนมัติหาก Google รีเซ็ตท่อ
+                    resump = packet.get("sessionResumptionUpdate")
+                    if resump and resump.get("resumable") and resump.get("newHandle"):
+                        session["handle"] = resump["newHandle"]
 
-                model_turn = server_content.get("modelTurn")
-                if model_turn and not drop_current_turn_audio:
-                    for part in model_turn.get("parts", []):
-                        inline_data = part.get("inlineData")
-                        if not inline_data:
-                            continue
-                        mime = inline_data.get("mimeType", "")
-                        if mime.startswith("audio/pcm"):
-                            if not ai_is_speaking:
-                                ai_is_speaking = True
-                                await outbound_q.put(bytes([MSG_AI_SPEAK_START]))
+                    server_content = packet.get("serverContent")
+                    if not server_content:
+                        continue
 
-                            pcm24k = base64.b64decode(inline_data["data"])
-                            pcm16k = downsample_24k_to_16k(pcm24k)
-                            for offset in range(0, len(pcm16k), OUTBOUND_PCM_CHUNK_BYTES):
-                                if drop_current_turn_audio:
-                                    break
-                                chunk = pcm16k[offset : offset + OUTBOUND_PCM_CHUNK_BYTES]
-                                await outbound_q.put(bytes([MSG_AI_AUDIO_PCM]) + chunk)
+                    out_tr = server_content.get("outputTranscription")
+                    if out_tr and out_tr.get("text"):
+                        current_reply_parts.append(out_tr["text"])
 
-                if server_content.get("turnComplete") or server_content.get("interrupted"):
-                    if current_reply_parts:
-                        reply_text = "".join(current_reply_parts).strip()
-                        runtime_state["last_ai_reply"] = reply_text
-                        logger.info("SeeSpeak ตอบแล้ว: %s", reply_text)
-                        current_reply_parts.clear()
-                    runtime_state["turns_completed"] += 1
-                    was_dropped = drop_current_turn_audio
-                    drop_current_turn_audio = False
-                    if ai_is_speaking and not was_dropped:
+                    model_turn = server_content.get("modelTurn")
+                    if model_turn and not drop_current_turn_audio:
+                        for part in model_turn.get("parts", []):
+                            inline_data = part.get("inlineData")
+                            if not inline_data:
+                                continue
+                            mime = inline_data.get("mimeType", "")
+                            if mime.startswith("audio/pcm"):
+                                if not ai_is_speaking:
+                                    ai_is_speaking = True
+                                    await outbound_q.put(bytes([MSG_AI_SPEAK_START]))
+
+                                pcm24k = base64.b64decode(inline_data["data"])
+                                pcm16k = downsample_24k_to_16k(pcm24k)
+                                for offset in range(0, len(pcm16k), OUTBOUND_PCM_CHUNK_BYTES):
+                                    if drop_current_turn_audio:
+                                        break
+                                    chunk = pcm16k[offset : offset + OUTBOUND_PCM_CHUNK_BYTES]
+                                    await outbound_q.put(bytes([MSG_AI_AUDIO_PCM]) + chunk)
+
+                    if server_content.get("turnComplete") or server_content.get("interrupted"):
+                        if current_reply_parts:
+                            reply_text = "".join(current_reply_parts).strip()
+                            runtime_state["last_ai_reply"] = reply_text
+                            logger.info("SeeSpeak ตอบแล้ว: %s", reply_text)
+                            current_reply_parts.clear()
+                        runtime_state["turns_completed"] += 1
+                        was_dropped = drop_current_turn_audio
+                        drop_current_turn_audio = False
+                        if ai_is_speaking and not was_dropped:
+                            ai_is_speaking = False
+                            await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
+                        else:
+                            ai_is_speaking = False
+
+                # หากหลุดออกจาก loop โดยที่แว่นยังต่ออยู่ -> ต่อท่อ Gemini ใหม่แบบไร้รอยต่อ!
+                if not esp_closed.is_set():
+                    if ai_is_speaking:
                         ai_is_speaking = False
                         await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
-                    else:
-                        ai_is_speaking = False
-
-        except Exception as exc:
-            runtime_state["last_error"] = f"gemini_to_esp: {exc}"
-            logger.warning("gemini_to_queue หยุดทำงาน: %s", exc)
+                    ok = await reconnect_upstream("upstream closed cleanly")
+                    if not ok:
+                        break
+            except Exception as exc:
+                if esp_closed.is_set():
+                    break
+                runtime_state["last_error"] = f"gemini_auto_resume: {exc}"
+                if ai_is_speaking:
+                    ai_is_speaking = False
+                    await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
+                ok = await reconnect_upstream(str(exc))
+                if not ok:
+                    break
 
     async def queue_to_esp():
         """ส่งเสียงจากคิวลงแว่น: 6 แพ็กเก็ตแรกส่งทันที 0ms (ตอบไวสุด) จากนั้นคุมที่ 1.14x (ไม่มีวันเร่งสปีด!)"""
         turn_chunks = 0
         try:
-            while True:
+            while not esp_closed.is_set():
                 frame = await outbound_q.get()
                 if not frame:
                     continue
@@ -441,14 +528,21 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                         await asyncio.sleep(STEADY_PACING_SEC)
         except Exception as exc:
             logger.warning("queue_to_esp หยุดทำงาน: %s", exc)
+        finally:
+            esp_closed.set()
 
     async def gemini_keepalive():
         """ส่งเสียงเงียบ 100ms ทุก 18 วินาทีเมื่อว่าง ป้องกัน Gemini ตัดสายด้วย 1008 inactivity"""
         try:
-            while True:
+            while not esp_closed.is_set():
                 await asyncio.sleep(5.0)
                 idle_sec = time.monotonic() - last_gemini_send_ts
-                if idle_sec >= KEEPALIVE_INTERVAL_SEC and not user_activity_open and not ai_is_speaking:
+                if (
+                    session["ws"] is not None
+                    and idle_sec >= KEEPALIVE_INTERVAL_SEC
+                    and not user_activity_open
+                    and not ai_is_speaking
+                ):
                     await send_gemini_json(
                         {
                             "realtimeInput": {
@@ -470,12 +564,14 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
         asyncio.create_task(gemini_keepalive()),
     }
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    esp_closed.set()
     for t in pending:
         t.cancel()
-    try:
-        await gemini_ws.close()
-    except Exception:
-        pass
+    if session["ws"] is not None:
+        try:
+            await session["ws"].close()
+        except Exception:
+            pass
     try:
         await esp_ws.close()
     except Exception:
