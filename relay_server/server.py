@@ -5,8 +5,9 @@ SeeSpeak V3 — Edge-to-Cloud Binary Relay Server (Architecture 2B)
 - ฝั่งแว่น ESP32-S3 ส่ง-รับเฉพาะ Raw Binary (PCM 16kHz / JPEG) ช่วยลดภาระ CPU/RAM บนบอร์ดกว่า 70%
 - ฝั่ง Relay เชื่อมต่อ Gemini Live API (gemini-3.8-live เป็นหลัก) ให้สำเร็จก่อนตอบรับแว่น (ไม่มีลูปเชื่อม-หลุดซ้ำ)
 - ใช้โปรโตคอล v1beta รุ่นล่าสุด `realtimeInput.audio` + `realtimeInput.video` คู่กับ
-  `automaticActivityDetection.disabled = true` + `activityStart` / `activityEnd` เพื่อตอบเสียงภาษาไทยทันที (~1.5-1.8 วินาที)
-- แปลงเสียงตอบกลับ 24kHz -> 16kHz แบบเรียลไทม์ พร้อมสัญญาณกันเสียงสะท้อน (Echo Gate)
+  `automaticActivityDetection.disabled = true` + `activityStart` / `activityEnd` เพื่อตอบเสียงภาษาไทยทันที (~1.4-1.8 วินาที)
+- แยกคิวส่งเสียง (Decoupled Async Queue + Pacing) เพื่อรองรับการพูดประโยคยาวๆ (เช่น ก-ฮ หรืออ่านฉลากยา) โดยไม่หลุดกลางประโยค
+- มีระบบ Keepalive ส่งเสียงเงียบ 100ms ทุก 18 วินาที กัน Gemini ตัดสายเมื่อเงียบเกิน 1 นาที (ป้องกัน error 1008 inactivity)
 - มีหน้า /test-key สำหรับตรวจสอบว่า GEMINI_API_KEY บน Render.com เชื่อมต่อ Gemini Live API ได้จริงทันที
 """
 
@@ -15,6 +16,7 @@ import base64
 import json
 import logging
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -28,7 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("seespeak-relay")
 
-app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.3.0")
+app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.4.0")
 
 # ---------------------------------------------------------------------------
 # ค่าตั้งต้นจาก Environment Variables (ตั้งบน Render / Cloud Run เพื่อซ่อน API Key อย่างปลอดภัย)
@@ -75,6 +77,9 @@ MSG_AI_SPEAK_START  = 0x11  # Relay -> ESP32: Mute mic (prevent echo)
 MSG_AI_SPEAK_END    = 0x12  # Relay -> ESP32: Unmute mic after playback
 
 OUTBOUND_PCM_CHUNK_BYTES = 2048  # 64 ms @ 16kHz 16-bit mono
+OUTBOUND_PACING_SEC = 0.014      # ส่งเร็วกว่าเวลาจริง ~4.5x แต่ไม่ถล่มบัฟเฟอร์ TCP ของ ESP32
+KEEPALIVE_INTERVAL_SEC = 18.0    # ส่งเสียงเงียบ 100ms ทุก 18 วิ กัน Gemini ปิดเซสชัน (1008 inactivity)
+SILENCE_KEEPALIVE_B64 = base64.b64encode(b"\x00\x00" * 1600).decode("ascii")  # 100 ms silence
 
 # สถานะล่าสุดสำหรับดูใน /health เพื่อช่วยดีบักได้ทันที
 runtime_state = {
@@ -86,6 +91,7 @@ runtime_state = {
     "sessions_served": 0,
     "images_forwarded": 0,
     "turns_completed": 0,
+    "keepalives_sent": 0,
     "audio_chunks_sent_to_esp": 0,
 }
 
@@ -182,7 +188,7 @@ async def health_check():
     return JSONResponse(
         {
             "status": "ok",
-            "version": "3.3.0",
+            "version": "3.4.0",
             "service": "SeeSpeak V3 Gemini Live Relay (2B)",
             "api_key_configured": bool(GEMINI_API_KEY),
             "voice": GEMINI_VOICE_NAME,
@@ -237,7 +243,6 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
     runtime_state["sessions_served"] += 1
     logger.info("แว่น SeeSpeak ขอเชื่อมต่อเข้ามา (%s) -> กำลังเปิดท่อ Gemini Live...", esp_ws.client)
 
-    # เชื่อมต่อ Gemini Live ให้สำเร็จก่อนตอบรับแว่น (หากคีย์ผิด แว่นจะไม่สั่นหลอกและไม่วนถ่ายภาพซ้ำ)
     try:
         gemini_ws, active_model = await connect_gemini_live(api_key)
     except Exception as exc:
@@ -252,9 +257,20 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
     jpeg_buffer = bytearray()
     ai_is_speaking = False
     user_activity_open = False
+    last_gemini_send_ts = time.monotonic()
+    gemini_send_lock = asyncio.Lock()
+
+    # คิวส่งเสียงแยกอิสระ (สูงสุด ~64 วินาทีของเสียง 16kHz) เพื่อไม่ให้ท่อ Gemini ค้างเวลาแว่นรับเสียงยาวๆ เช่น ก-ฮ
+    outbound_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1000)
+
+    async def send_gemini_json(payload: dict):
+        nonlocal last_gemini_send_ts
+        async with gemini_send_lock:
+            await gemini_ws.send(json.dumps(payload, ensure_ascii=False))
+            last_gemini_send_ts = time.monotonic()
 
     async def esp_to_gemini():
-        """รับเสียง PCM ดิบและภาพ JPEG จากแว่น ESP32-S3 ส่งต่อไปยัง Gemini Live API (v1beta audio/video + activityStart/End)"""
+        """รับเสียง PCM ดิบและภาพ JPEG จากแว่น ESP32-S3 ส่งต่อไปยัง Gemini Live API"""
         nonlocal user_activity_open
         try:
             while True:
@@ -271,19 +287,17 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 if opcode == MSG_ESP_AUDIO_PCM and payload:
                     if not user_activity_open:
                         user_activity_open = True
-                        await gemini_ws.send(json.dumps({"realtimeInput": {"activityStart": {}}}))
+                        await send_gemini_json({"realtimeInput": {"activityStart": {}}})
                     audio_b64 = base64.b64encode(payload).decode("ascii")
-                    await gemini_ws.send(
-                        json.dumps(
-                            {
-                                "realtimeInput": {
-                                    "audio": {
-                                        "mimeType": "audio/pcm;rate=16000",
-                                        "data": audio_b64,
-                                    }
+                    await send_gemini_json(
+                        {
+                            "realtimeInput": {
+                                "audio": {
+                                    "mimeType": "audio/pcm;rate=16000",
+                                    "data": audio_b64,
                                 }
                             }
-                        )
+                        }
                     )
 
                 elif opcode == MSG_ESP_JPEG_CHUNK and payload:
@@ -297,24 +311,22 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                         img_b64 = base64.b64encode(bytes(jpeg_buffer)).decode("ascii")
                         runtime_state["images_forwarded"] += 1
                         logger.info("ส่งภาพกล้องสด (%d bytes) ขึ้น %s", len(jpeg_buffer), active_model)
-                        await gemini_ws.send(
-                            json.dumps(
-                                {
-                                    "realtimeInput": {
-                                        "video": {
-                                            "mimeType": "image/jpeg",
-                                            "data": img_b64,
-                                        }
+                        await send_gemini_json(
+                            {
+                                "realtimeInput": {
+                                    "video": {
+                                        "mimeType": "image/jpeg",
+                                        "data": img_b64,
                                     }
                                 }
-                            )
+                            }
                         )
                     jpeg_buffer.clear()
 
                 elif opcode == MSG_ESP_SPEECH_END:
                     if user_activity_open:
                         user_activity_open = False
-                        await gemini_ws.send(json.dumps({"realtimeInput": {"activityEnd": {}}}))
+                        await send_gemini_json({"realtimeInput": {"activityEnd": {}}})
                         logger.info("ผู้ใช้พูดจบ -> ส่ง activityEnd ให้ %s ตอบเสียงสดทันที", active_model)
 
         except WebSocketDisconnect:
@@ -323,8 +335,8 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
             runtime_state["last_error"] = f"esp_to_gemini: {exc}"
             logger.warning("esp_to_gemini หยุดทำงาน: %s", exc)
 
-    async def gemini_to_esp():
-        """รับเสียงตอบกลับจาก Gemini Live API แปลงเป็น PCM 16kHz ส่งกลับออกลำโพงแว่นทันที"""
+    async def gemini_to_queue():
+        """อ่านข้อมูลจาก Gemini Live API เต็มความเร็วแล้วเก็บลงคิว (ท่อ Google จะไม่ติดค้างแม้ประโยคยาว)"""
         nonlocal ai_is_speaking
         current_reply_parts = []
         try:
@@ -350,14 +362,13 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                         if mime.startswith("audio/pcm"):
                             if not ai_is_speaking:
                                 ai_is_speaking = True
-                                await esp_ws.send_bytes(bytes([MSG_AI_SPEAK_START]))
+                                await outbound_q.put(bytes([MSG_AI_SPEAK_START]))
 
                             pcm24k = base64.b64decode(inline_data["data"])
                             pcm16k = downsample_24k_to_16k(pcm24k)
                             for offset in range(0, len(pcm16k), OUTBOUND_PCM_CHUNK_BYTES):
                                 chunk = pcm16k[offset : offset + OUTBOUND_PCM_CHUNK_BYTES]
-                                await esp_ws.send_bytes(bytes([MSG_AI_AUDIO_PCM]) + chunk)
-                                runtime_state["audio_chunks_sent_to_esp"] += 1
+                                await outbound_q.put(bytes([MSG_AI_AUDIO_PCM]) + chunk)
 
                 if server_content.get("turnComplete") or server_content.get("interrupted"):
                     if current_reply_parts:
@@ -368,15 +379,52 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                     runtime_state["turns_completed"] += 1
                     if ai_is_speaking:
                         ai_is_speaking = False
-                        await esp_ws.send_bytes(bytes([MSG_AI_SPEAK_END]))
+                        await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
 
         except Exception as exc:
             runtime_state["last_error"] = f"gemini_to_esp: {exc}"
-            logger.warning("gemini_to_esp หยุดทำงาน: %s", exc)
+            logger.warning("gemini_to_queue หยุดทำงาน: %s", exc)
 
-    task_up = asyncio.create_task(esp_to_gemini())
-    task_down = asyncio.create_task(gemini_to_esp())
-    done, pending = await asyncio.wait({task_up, task_down}, return_when=asyncio.FIRST_COMPLETED)
+    async def queue_to_esp():
+        """ส่งเสียงจากคิวลงแว่น ESP32-S3 อย่างนุ่มนวล (คุมจังหวะกัน TCP บัฟเฟอร์ล้นเวลา AI พูดยาว)"""
+        try:
+            while True:
+                frame = await outbound_q.get()
+                await esp_ws.send_bytes(frame)
+                if frame and frame[0] == MSG_AI_AUDIO_PCM:
+                    runtime_state["audio_chunks_sent_to_esp"] += 1
+                    await asyncio.sleep(OUTBOUND_PACING_SEC)
+        except Exception as exc:
+            logger.warning("queue_to_esp หยุดทำงาน: %s", exc)
+
+    async def gemini_keepalive():
+        """ส่งเสียงเงียบ 100ms ทุก 18 วินาทีเมื่อว่าง ป้องกัน Gemini ตัดสายด้วย 1008 inactivity"""
+        try:
+            while True:
+                await asyncio.sleep(5.0)
+                idle_sec = time.monotonic() - last_gemini_send_ts
+                if idle_sec >= KEEPALIVE_INTERVAL_SEC and not user_activity_open and not ai_is_speaking:
+                    await send_gemini_json(
+                        {
+                            "realtimeInput": {
+                                "audio": {
+                                    "mimeType": "audio/pcm;rate=16000",
+                                    "data": SILENCE_KEEPALIVE_B64,
+                                }
+                            }
+                        }
+                    )
+                    runtime_state["keepalives_sent"] += 1
+        except Exception as exc:
+            logger.warning("gemini_keepalive หยุดทำงาน: %s", exc)
+
+    tasks = {
+        asyncio.create_task(esp_to_gemini()),
+        asyncio.create_task(gemini_to_queue()),
+        asyncio.create_task(queue_to_esp()),
+        asyncio.create_task(gemini_keepalive()),
+    }
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for t in pending:
         t.cancel()
     try:
