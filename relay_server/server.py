@@ -2,12 +2,12 @@
 SeeSpeak V3 — Edge-to-Cloud Binary Relay Server (Architecture 2B)
 =================================================================
 ทำหน้าที่เป็น "ล่ามตัวกลางความเร็วสูง" ระหว่างแว่นตา XIAO ESP32S3 Sense กับ Google Gemini Live API:
-- ฝั่งแว่น ESP32-S3 ส่ง-รับเฉพาะ Raw Binary (PCM 16kHz / JPEG) ช่วยลดภาระ CPU/RAM บนบอร์ดกว่า 70%
-- ฝั่ง Relay เชื่อมต่อ Gemini Live API (gemini-3.8-live เป็นหลัก) ให้สำเร็จก่อนตอบรับแว่น (ไม่มีลูปเชื่อม-หลุดซ้ำ)
-- ใช้โปรโตคอล v1beta รุ่นล่าสุด `realtimeInput.audio` + `realtimeInput.video` คู่กับ
-  `automaticActivityDetection.disabled = true` + `activityStart` / `activityEnd` เพื่อตอบเสียงภาษาไทยทันที (~1.4-1.8 วินาที)
-- แยกคิวส่งเสียง (Decoupled Async Queue + Pacing) เพื่อรองรับการพูดประโยคยาวๆ (เช่น ก-ฮ หรืออ่านฉลากยา) โดยไม่หลุดกลางประโยค
-- มีระบบ Keepalive ส่งเสียงเงียบ 100ms ทุก 18 วินาที กัน Gemini ตัดสายเมื่อเงียบเกิน 1 นาที (ป้องกัน error 1008 inactivity)
+- เสียงผู้หญิงวัยรุ่นน่ารัก สดใส เป็นกันเอง (ค่าเริ่มต้น: Laomedeia — ปรับผ่าน GEMINI_VOICE_NAME ได้)
+- ตอบเร็วสุด: 6 แพ็กเก็ตแรก (384 ms) ส่งทันที 0 ms ไม่หน่วง แล้วคุมจังหวะส่งที่ 1.14x (56 ms/64 ms)
+  เพื่อรองรับการพูดประโยคยาวมาก (เช่น ท่อง ก-ฮ หรืออ่านฉลากยา) โดยไม่ล้นบัฟเฟอร์และไม่เร่งสปีด!
+- รองรับคำสั่งหยุดพูดกลางคัน (MSG_ESP_CANCEL_AI = 0x06) ทั้งจากการพูดแทรก ("หยุดๆ/พอๆ") และการกดปุ่ม 1 ครั้ง
+  โดยล้างคิวเสียงที่ค้างอยู่และทิ้งแพ็กเก็ตที่เหลือของเทิร์นนั้นทันที ไม่มีเสียงรั่วตามมา
+- มีระบบ Keepalive ส่งเสียงเงียบ 100ms ทุก 18 วินาที กัน Gemini ตัดสายเมื่อเงียบเกิน 1 นาที (1008 inactivity)
 - มีหน้า /test-key สำหรับตรวจสอบว่า GEMINI_API_KEY บน Render.com เชื่อมต่อ Gemini Live API ได้จริงทันที
 """
 
@@ -30,13 +30,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("seespeak-relay")
 
-app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.4.0")
+app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.5.0")
 
 # ---------------------------------------------------------------------------
 # ค่าตั้งต้นจาก Environment Variables (ตั้งบน Render / Cloud Run เพื่อซ่อน API Key อย่างปลอดภัย)
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Aoede").strip()
+# เสียงผู้หญิงสดใสน่ารัก: Laomedeia (ร่าเริงน่ารัก), Leda (วัยรุ่นใสๆ), Autonoe (สดใส), Zephyr (นุ่มใส), Aoede (สุภาพอบอุ่น)
+GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Laomedeia").strip()
 
 _env_models = os.getenv("GEMINI_LIVE_MODELS", "").strip()
 if _env_models:
@@ -55,15 +56,15 @@ GEMINI_LIVE_WS_URL = (
 )
 
 SEESPEAK_SYSTEM_PROMPT = (
-    "คุณคือ ซีสปีค (SeeSpeak) ผู้ช่วยอัจฉริยะบนแว่นตาสำหรับผู้บกพร่องทางสายตาในประเทศไทย "
+    "คุณคือ น้องซีสปีค (SeeSpeak) ผู้ช่วยสาวน้อยอัจฉริยะบนแว่นตาสำหรับผู้บกพร่องทางสายตาในประเทศไทย "
     "คุณมองเห็นภาพสดจากกล้องด้านหน้าแว่นตาและได้ยินเสียงคำถามของผู้ใช้งานตลอดเวลา "
     "หลักการตอบที่สำคัญมาก:\n"
-    "1. ตอบเป็นภาษาไทยด้วยน้ำเสียงผู้หญิงที่สุภาพ อ่อนโยน ชัดเจน และกระชับทันทีภายใน 1-3 ประโยค (ลงท้ายด้วยคำว่า ค่ะ)\n"
+    "1. ตอบเป็นภาษาไทยด้วยน้ำเสียงผู้หญิงวัยรุ่นที่น่ารัก สดใส อ่อนโยน ร่าเริง เป็นกันเอง ชัดเจน และกระชับทันทีภายใน 1-3 ประโยค (ลงท้ายด้วยคำว่า ค่ะ หรือ นะคะ อย่างเป็นธรรมชาติ)\n"
     "2. หากผู้ใช้ถามเรื่องสี สิ่งของ หรือสภาพแวดล้อมตรงหน้า ให้บอกคำตอบตรงประเด็นทันที พร้อมระบุตำแหน่งทิศทาง (ด้านซ้าย ตรงกลาง ด้านขวา) และระยะห่างโดยประมาณ\n"
     "3. หากผู้ใช้ขอให้อ่านข้อความ ป้าย ฉลากยา ราคา หรือเอกสาร ให้อ่านข้อความที่มองเห็นทั้งหมดอย่างชัดเจนทันทีแม้ภาพจะเอียงหรือเบลอเล็กน้อย\n"
     "4. หากผู้ใช้ถามเรื่องเงินหรือธนบัตรไทย (20 สีเขียว, 50 สีฟ้า, 100 สีแดง, 500 สีม่วง, 1000 สีเทาน้ำตาล) และเหรียญ ให้พูดสรุป 'ยอดเงินรวมทั้งหมด' ขึ้นเป็นคำแรกเสมอ\n"
     "5. จดจำบริบทของบทสนทนาก่อนหน้าเสมอ เพื่อให้ผู้ใช้ถามต่อเนื่องได้เหมือนคุยกับผู้ช่วยส่วนตัว\n"
-    "6. หากได้ยินเพียงเสียงรบกวนรอบข้างเบาๆ ที่ไม่ใช่คำถามถึงคุณ ให้เงียบไว้ไม่ต้องตอบ"
+    "6. หากได้ยินคำพูดของผู้ใช้แม้จะสั้นหรือเบา ให้พยายามตอบอย่างสุภาพน่ารักเสมอ จะเงียบไว้เฉพาะกรณีที่เป็นเสียงรบกวนที่ไม่มีคำพูดเลยเท่านั้น"
 )
 
 # Binary Frame Protocol Opcodes (ต้องตรงกับ firmware_seespeak_v3.ino)
@@ -71,15 +72,17 @@ MSG_ESP_AUDIO_PCM   = 0x01  # ESP32 -> Relay: 16kHz 16-bit mono PCM audio
 MSG_ESP_JPEG_CHUNK  = 0x02  # ESP32 -> Relay: JPEG frame chunk (intermediate)
 MSG_ESP_JPEG_END    = 0x04  # ESP32 -> Relay: JPEG frame final chunk
 MSG_ESP_SPEECH_END  = 0x05  # ESP32 -> Relay: User paused speaking -> send explicit activityEnd
+MSG_ESP_CANCEL_AI   = 0x06  # ESP32 -> Relay: User interrupted ("หยุด/พอ") or tapped button -> stop AI audio immediately
 
 MSG_AI_AUDIO_PCM    = 0x10  # Relay -> ESP32: 16kHz 16-bit mono PCM audio
-MSG_AI_SPEAK_START  = 0x11  # Relay -> ESP32: Mute mic (prevent echo)
-MSG_AI_SPEAK_END    = 0x12  # Relay -> ESP32: Unmute mic after playback
+MSG_AI_SPEAK_START  = 0x11  # Relay -> ESP32: AI starts speaking
+MSG_AI_SPEAK_END    = 0x12  # Relay -> ESP32: AI finished or cancelled speaking
 
 OUTBOUND_PCM_CHUNK_BYTES = 2048  # 64 ms @ 16kHz 16-bit mono
-OUTBOUND_PACING_SEC = 0.014      # ส่งเร็วกว่าเวลาจริง ~4.5x แต่ไม่ถล่มบัฟเฟอร์ TCP ของ ESP32
-KEEPALIVE_INTERVAL_SEC = 18.0    # ส่งเสียงเงียบ 100ms ทุก 18 วิ กัน Gemini ปิดเซสชัน (1008 inactivity)
-SILENCE_KEEPALIVE_B64 = base64.b64encode(b"\x00\x00" * 1600).decode("ascii")  # 100 ms silence
+BURST_CHUNKS_ZERO_DELAY  = 6     # 6 แพ็กเก็ตแรก (384 ms) ส่งทันที 0 ms เพื่อเริ่มพูดไวสุด!
+STEADY_PACING_SEC        = 0.056 # แพ็กเก็ตถัดไปส่งที่ 56 ms ต่อ 64 ms (1.14x real-time) ไม่มีวันล้นบัฟเฟอร์/เร่งสปีด!
+KEEPALIVE_INTERVAL_SEC   = 18.0  # ส่งเสียงเงียบ 100ms ทุก 18 วิ กัน Gemini ปิดเซสชัน (1008 inactivity)
+SILENCE_KEEPALIVE_B64    = base64.b64encode(b"\x00\x00" * 1600).decode("ascii")  # 100 ms silence
 
 # สถานะล่าสุดสำหรับดูใน /health เพื่อช่วยดีบักได้ทันที
 runtime_state = {
@@ -91,6 +94,7 @@ runtime_state = {
     "sessions_served": 0,
     "images_forwarded": 0,
     "turns_completed": 0,
+    "cancels_handled": 0,
     "keepalives_sent": 0,
     "audio_chunks_sent_to_esp": 0,
 }
@@ -118,7 +122,7 @@ async def connect_gemini_live(api_key: str):
     for model_name in LIVE_MODEL_CANDIDATES:
         ws = None
         try:
-            logger.info("กำลังเชื่อมต่อ Gemini Live API รุ่น: %s", model_name)
+            logger.info("กำลังเชื่อมต่อ Gemini Live API รุ่น: %s (เสียง: %s)", model_name, GEMINI_VOICE_NAME)
             ws = await websockets.connect(
                 url,
                 max_size=8 * 1024 * 1024,
@@ -141,7 +145,6 @@ async def connect_gemini_live(api_key: str):
                     "systemInstruction": {
                         "parts": [{"text": SEESPEAK_SYSTEM_PROMPT}],
                     },
-                    # ใช้ตัวตรวจจับการเริ่ม/จบคำพูดจากฝั่งแว่น (activityStart/activityEnd) เพื่อตอบกลับทันที
                     "realtimeInputConfig": {
                         "automaticActivityDetection": {
                             "disabled": True,
@@ -188,7 +191,7 @@ async def health_check():
     return JSONResponse(
         {
             "status": "ok",
-            "version": "3.4.0",
+            "version": "3.5.0",
             "service": "SeeSpeak V3 Gemini Live Relay (2B)",
             "api_key_configured": bool(GEMINI_API_KEY),
             "voice": GEMINI_VOICE_NAME,
@@ -252,16 +255,27 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
         return
 
     await esp_ws.accept()
-    logger.info("เปิดท่อคุยสด SeeSpeak <-> %s เรียบร้อยแล้ว!", active_model)
+    logger.info("เปิดท่อคุยสด SeeSpeak <-> %s (เสียง %s) เรียบร้อยแล้ว!", active_model, GEMINI_VOICE_NAME)
 
     jpeg_buffer = bytearray()
     ai_is_speaking = False
     user_activity_open = False
+    drop_current_turn_audio = False
     last_gemini_send_ts = time.monotonic()
     gemini_send_lock = asyncio.Lock()
 
-    # คิวส่งเสียงแยกอิสระ (สูงสุด ~64 วินาทีของเสียง 16kHz) เพื่อไม่ให้ท่อ Gemini ค้างเวลาแว่นรับเสียงยาวๆ เช่น ก-ฮ
-    outbound_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1000)
+    # คิวส่งเสียงขนาดใหญ่ (~160 วินาทีของเสียง 16kHz) เพื่อรองรับคำตอบยาวๆ เช่น ก-ฮ ได้สบายๆ
+    outbound_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2500)
+
+    def drain_outbound_queue():
+        drained = 0
+        while not outbound_q.empty():
+            try:
+                outbound_q.get_nowait()
+                drained += 1
+            except asyncio.QueueEmpty:
+                break
+        return drained
 
     async def send_gemini_json(payload: dict):
         nonlocal last_gemini_send_ts
@@ -270,8 +284,8 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
             last_gemini_send_ts = time.monotonic()
 
     async def esp_to_gemini():
-        """รับเสียง PCM ดิบและภาพ JPEG จากแว่น ESP32-S3 ส่งต่อไปยัง Gemini Live API"""
-        nonlocal user_activity_open
+        """รับเสียง PCM ดิบ, ภาพ JPEG, และสัญญาณหยุดพูด (0x06) จากแว่น ESP32-S3"""
+        nonlocal user_activity_open, ai_is_speaking, drop_current_turn_audio
         try:
             while True:
                 msg = await esp_ws.receive()
@@ -284,9 +298,19 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 opcode = data[0]
                 payload = data[1:]
 
-                if opcode == MSG_ESP_AUDIO_PCM and payload:
+                if opcode == MSG_ESP_CANCEL_AI:
+                    # ผู้ใช้พูดแทรก ("หยุดๆ/พอๆ") หรือกดปุ่ม 1 ครั้ง -> ล้างคิวและหยุดเสียงเทิร์นนี้ทันที!
+                    drained = drain_outbound_queue()
+                    drop_current_turn_audio = True
+                    ai_is_speaking = False
+                    runtime_state["cancels_handled"] += 1
+                    logger.info("ได้รับคำสั่งหยุดเสียง AI (0x06) -> ล้างคิวทิ้ง %d แพ็กเก็ตทันที!", drained)
+                    await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
+
+                elif opcode == MSG_ESP_AUDIO_PCM and payload:
                     if not user_activity_open:
                         user_activity_open = True
+                        drop_current_turn_audio = False  # เทิร์นใหม่เริ่มแล้ว เปิดรับเสียงตอบใหม่
                         await send_gemini_json({"realtimeInput": {"activityStart": {}}})
                     audio_b64 = base64.b64encode(payload).decode("ascii")
                     await send_gemini_json(
@@ -326,6 +350,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                 elif opcode == MSG_ESP_SPEECH_END:
                     if user_activity_open:
                         user_activity_open = False
+                        drop_current_turn_audio = False
                         await send_gemini_json({"realtimeInput": {"activityEnd": {}}})
                         logger.info("ผู้ใช้พูดจบ -> ส่ง activityEnd ให้ %s ตอบเสียงสดทันที", active_model)
 
@@ -337,7 +362,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
 
     async def gemini_to_queue():
         """อ่านข้อมูลจาก Gemini Live API เต็มความเร็วแล้วเก็บลงคิว (ท่อ Google จะไม่ติดค้างแม้ประโยคยาว)"""
-        nonlocal ai_is_speaking
+        nonlocal ai_is_speaking, drop_current_turn_audio
         current_reply_parts = []
         try:
             async for raw_msg in gemini_ws:
@@ -353,7 +378,7 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                     current_reply_parts.append(out_tr["text"])
 
                 model_turn = server_content.get("modelTurn")
-                if model_turn:
+                if model_turn and not drop_current_turn_audio:
                     for part in model_turn.get("parts", []):
                         inline_data = part.get("inlineData")
                         if not inline_data:
@@ -367,6 +392,8 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                             pcm24k = base64.b64decode(inline_data["data"])
                             pcm16k = downsample_24k_to_16k(pcm24k)
                             for offset in range(0, len(pcm16k), OUTBOUND_PCM_CHUNK_BYTES):
+                                if drop_current_turn_audio:
+                                    break
                                 chunk = pcm16k[offset : offset + OUTBOUND_PCM_CHUNK_BYTES]
                                 await outbound_q.put(bytes([MSG_AI_AUDIO_PCM]) + chunk)
 
@@ -377,23 +404,41 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
                         logger.info("SeeSpeak ตอบแล้ว: %s", reply_text)
                         current_reply_parts.clear()
                     runtime_state["turns_completed"] += 1
-                    if ai_is_speaking:
+                    was_dropped = drop_current_turn_audio
+                    drop_current_turn_audio = False
+                    if ai_is_speaking and not was_dropped:
                         ai_is_speaking = False
                         await outbound_q.put(bytes([MSG_AI_SPEAK_END]))
+                    else:
+                        ai_is_speaking = False
 
         except Exception as exc:
             runtime_state["last_error"] = f"gemini_to_esp: {exc}"
             logger.warning("gemini_to_queue หยุดทำงาน: %s", exc)
 
     async def queue_to_esp():
-        """ส่งเสียงจากคิวลงแว่น ESP32-S3 อย่างนุ่มนวล (คุมจังหวะกัน TCP บัฟเฟอร์ล้นเวลา AI พูดยาว)"""
+        """ส่งเสียงจากคิวลงแว่น: 6 แพ็กเก็ตแรกส่งทันที 0ms (ตอบไวสุด) จากนั้นคุมที่ 1.14x (ไม่มีวันเร่งสปีด!)"""
+        turn_chunks = 0
         try:
             while True:
                 frame = await outbound_q.get()
-                await esp_ws.send_bytes(frame)
-                if frame and frame[0] == MSG_AI_AUDIO_PCM:
+                if not frame:
+                    continue
+                op = frame[0]
+                if op == MSG_AI_SPEAK_START:
+                    turn_chunks = 0
+                    await esp_ws.send_bytes(frame)
+                elif op == MSG_AI_SPEAK_END:
+                    turn_chunks = 0
+                    await esp_ws.send_bytes(frame)
+                elif op == MSG_AI_AUDIO_PCM:
+                    if drop_current_turn_audio:
+                        continue
+                    await esp_ws.send_bytes(frame)
                     runtime_state["audio_chunks_sent_to_esp"] += 1
-                    await asyncio.sleep(OUTBOUND_PACING_SEC)
+                    turn_chunks += 1
+                    if turn_chunks > BURST_CHUNKS_ZERO_DELAY:
+                        await asyncio.sleep(STEADY_PACING_SEC)
         except Exception as exc:
             logger.warning("queue_to_esp หยุดทำงาน: %s", exc)
 
