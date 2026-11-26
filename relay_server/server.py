@@ -3,9 +3,11 @@ SeeSpeak V3 — Edge-to-Cloud Binary Relay Server (Architecture 2B)
 =================================================================
 ทำหน้าที่เป็น "ล่ามตัวกลางความเร็วสูง" ระหว่างแว่นตา XIAO ESP32S3 Sense กับ Google Gemini Live API:
 - ฝั่งแว่น ESP32-S3 ส่ง-รับเฉพาะ Raw Binary (PCM 16kHz / JPEG) ช่วยลดภาระ CPU/RAM บนบอร์ดกว่า 70%
-- ฝั่ง Relay ใช้รูปแบบมาตรฐาน v1beta `realtimeInput.mediaChunks` สำหรับทั้งเสียง PCM 16kHz และภาพ JPEG
-- เมื่อแว่นส่งสัญญาณจบคำพูด (0x05) จะเติมช่วงเงียบสะอาด 450 ms ให้ VAD ฝั่ง Google ตอบกลับทันทีโดยไม่ตัดท่อ WebSocket
+- ฝั่ง Relay เชื่อมต่อ Gemini Live API (gemini-3.8-live เป็นหลัก) ให้สำเร็จก่อนตอบรับแว่น (ไม่มีลูปเชื่อม-หลุดซ้ำ)
+- ใช้รูปแบบมาตรฐาน v1beta `realtimeInput.mediaChunks` สำหรับทั้งเสียง PCM 16kHz และภาพ JPEG
+- เมื่อแว่นส่งสัญญาณจบคำพูด (0x05) จะเติมช่วงเงียบสะอาด 500 ms ให้ VAD ฝั่ง Google ตอบกลับทันทีโดยไม่ตัดท่อ WebSocket
 - แปลงเสียงตอบกลับ 24kHz -> 16kHz แบบเรียลไทม์ พร้อมสัญญาณกันเสียงสะท้อน (Echo Gate)
+- มีหน้า /test-key สำหรับตรวจสอบว่า GEMINI_API_KEY บน Render.com เชื่อมต่อ Gemini Live API ได้จริงทันที
 """
 
 import asyncio
@@ -26,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("seespeak-relay")
 
-app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.1.0")
+app = FastAPI(title="SeeSpeak V3 Gemini Live Relay", version="3.2.0")
 
 # ---------------------------------------------------------------------------
 # ค่าตั้งต้นจาก Environment Variables (ตั้งบน Render / Cloud Run เพื่อซ่อน API Key อย่างปลอดภัย)
@@ -39,10 +41,10 @@ if _env_models:
     LIVE_MODEL_CANDIDATES = [m.strip() for m in _env_models.split(",") if m.strip()]
 else:
     LIVE_MODEL_CANDIDATES = [
+        "models/gemini-3.8-live",
+        "models/gemini-3.1-flash-live-preview",
         "models/gemini-live-2.5-flash-native-audio",
         "models/gemini-2.5-flash-native-audio-preview-12-2025",
-        "models/gemini-3.8-live",
-        "models/gemini-2.0-flash-live-001",
     ]
 
 GEMINI_LIVE_WS_URL = (
@@ -79,6 +81,8 @@ SILENCE_FRAME_16K_B64 = base64.b64encode(b"\x00\x00" * 1600).decode("ascii")  # 
 runtime_state = {
     "last_active_model": None,
     "last_error": None,
+    "hint": None,
+    "api_key_prefix": (GEMINI_API_KEY[:4] + "...") if len(GEMINI_API_KEY) >= 4 else "",
     "sessions_served": 0,
     "images_forwarded": 0,
     "audio_chunks_sent_to_esp": 0,
@@ -100,7 +104,7 @@ def downsample_24k_to_16k(pcm24k_bytes: bytes) -> bytes:
 
 
 async def connect_gemini_live(api_key: str):
-    """เชื่อมต่อ Gemini Live API พร้อมสลับโมเดลสำรองอัตโนมัติจนกว่าจะได้โมเดลที่พร้อมใช้งาน"""
+    """เชื่อมต่อ Gemini Live API พร้อมสลับโมเดลสำรองอัตโนมัติ (หยุดทันทีหาก API Key ไม่ถูกต้อง)"""
     last_error: Optional[Exception] = None
     url = f"{GEMINI_LIVE_WS_URL}?key={api_key}"
 
@@ -139,18 +143,28 @@ async def connect_gemini_live(api_key: str):
                 logger.info("เชื่อมต่อ Gemini Live API สำเร็จ (%s)!", model_name)
                 runtime_state["last_active_model"] = model_name
                 runtime_state["last_error"] = None
+                runtime_state["hint"] = "พร้อมใช้งานปกติ"
                 return ws, model_name
             logger.warning("โมเดล %s ตอบกลับไม่คาดคิด: %s", model_name, str(ack)[:200])
             await ws.close()
         except Exception as exc:
             last_error = exc
-            runtime_state["last_error"] = f"{model_name}: {exc}"
+            err_text = str(exc)
+            runtime_state["last_error"] = f"{model_name}: {err_text}"
             logger.warning("โมเดล %s เชื่อมต่อไม่สำเร็จ: %s", model_name, exc)
             if ws is not None:
                 try:
                     await ws.close()
                 except Exception:
                     pass
+            # หยุดทันทีหาก API Key ไม่ถูกต้องหรือถูกปิดใช้งาน (ไม่ต้องลองวนครบทุกโมเดลให้ช้า)
+            if "API key not valid" in err_text or "API_KEY_INVALID" in err_text:
+                runtime_state["hint"] = (
+                    "GEMINI_API_KEY ไม่ถูกต้องหรือถูกระงับ/เป็นคีย์คนละประเภท — "
+                    "กรุณาสร้าง API Key ใหม่ (AIzaSy...) จาก https://aistudio.google.com/apikey "
+                    "แล้วนำไปใส่ใน Render.com -> Environment -> GEMINI_API_KEY"
+                )
+                break
 
     raise RuntimeError(f"ไม่สามารถเชื่อมต่อโมเดล Gemini Live API ตัวใดได้เลย: {last_error}")
 
@@ -161,7 +175,7 @@ async def health_check():
     return JSONResponse(
         {
             "status": "ok",
-            "version": "3.1.0",
+            "version": "3.2.0",
             "service": "SeeSpeak V3 Gemini Live Relay (2B)",
             "api_key_configured": bool(GEMINI_API_KEY),
             "voice": GEMINI_VOICE_NAME,
@@ -171,9 +185,42 @@ async def health_check():
     )
 
 
+@app.get("/test-key")
+async def test_api_key():
+    """กดเปิดลิงก์นี้ในเบราว์เซอร์เพื่อทดสอบได้ทันทีว่า GEMINI_API_KEY บน Render เชื่อมต่อ Gemini Live API ได้จริงหรือไม่"""
+    if not GEMINI_API_KEY:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": "ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Environment ของ Render.com",
+            },
+        )
+    try:
+        ws, active_model = await connect_gemini_live(GEMINI_API_KEY)
+        await ws.close()
+        return JSONResponse(
+            {
+                "ok": True,
+                "active_model": active_model,
+                "voice": GEMINI_VOICE_NAME,
+                "message": "เชื่อมต่อ Gemini Live API สำเร็จ 100%! แว่น SeeSpeak พร้อมคุยสดได้ทันที",
+            }
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "ok": False,
+                "api_key_prefix": runtime_state["api_key_prefix"],
+                "error": str(exc),
+                "hint": runtime_state["hint"],
+            },
+        )
+
+
 @app.websocket("/ws/seespeak")
 async def seespeak_ws_endpoint(esp_ws: WebSocket):
-    await esp_ws.accept()
     api_key = esp_ws.query_params.get("key", "").strip() or GEMINI_API_KEY
     if not api_key:
         runtime_state["last_error"] = "Missing GEMINI_API_KEY"
@@ -181,8 +228,9 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
         return
 
     runtime_state["sessions_served"] += 1
-    logger.info("แว่น SeeSpeak เชื่อมต่อเข้ามาแล้ว (%s)", esp_ws.client)
+    logger.info("แว่น SeeSpeak ขอเชื่อมต่อเข้ามา (%s) -> กำลังเปิดท่อ Gemini Live...", esp_ws.client)
 
+    # เชื่อมต่อ Gemini Live ให้สำเร็จก่อนตอบรับแว่น (หากคีย์ผิด แว่นจะไม่สั่นหลอกและไม่วนถ่ายภาพซ้ำ)
     try:
         gemini_ws, active_model = await connect_gemini_live(api_key)
     except Exception as exc:
@@ -190,6 +238,9 @@ async def seespeak_ws_endpoint(esp_ws: WebSocket):
         logger.error("เปิดเซสชัน Gemini Live ไม่สำเร็จ: %s", exc)
         await esp_ws.close(code=1011, reason="Gemini Live unavailable")
         return
+
+    await esp_ws.accept()
+    logger.info("เปิดท่อคุยสด SeeSpeak <-> %s เรียบร้อยแล้ว!", active_model)
 
     jpeg_buffer = bytearray()
     ai_is_speaking = False
