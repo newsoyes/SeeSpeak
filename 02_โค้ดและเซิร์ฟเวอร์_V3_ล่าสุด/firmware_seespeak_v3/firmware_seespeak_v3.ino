@@ -7,18 +7,18 @@
 //   * หมายเหตุฮาร์ดแวร์: ห้ามเสียบ MicroSD Card ในช่องบนบอร์ด เนื่องจากขา SD (D8/D9/D10)
 //     ใช้ร่วมกับแอมป์ลำโพง MAX98357A (BCLK/LRC/DIN)
 // ----------------------------------------------------------------------------
-// ฟีเจอร์ใหม่ระดับภาค (SeeSpeak V3 — Architecture 2B Hybrid):
-//   1. 🗣️ โหมดคุยสดไร้สัมผัส (Hands-Free Live Voice AI — Architecture 2B):
-//      - เชื่อมต่อ Cloud Relay -> Google Gemini Live API ผ่าน Binary WebSocket
-//      - พูดถามได้ทันทีโดยไม่ต้องกดปุ่ม ("ข้างหน้าสีอะไร / อ่านว่าอะไร / แบงก์เท่าไหร่")
-//      - ตอบกลับเป็นเสียงพูดภาษาไทยแท้ (Native Audio) ภายใน ~0.9-1.5 วินาที พร้อมจำบทสนทนาต่อเนื่อง
-//      - มีระบบกันเสียงสะท้อน (Echo Gate) และตัวกรองเสียงรบกวนในฮอลล์แข่ง (HPF 250Hz + Noise Gate + AGC)
-//   2. 🔘 ระบบปุ่มกดสำรองครบ 5 โหมดเดิม (Hybrid Fallback — ยิงตรง gemini-3.5-flash-lite):
-//      - กด 1 ครั้ง: โหมดอ่านข้อความ (Smart OCR ภาพคมชัดสูง UXGA 1600x1200) / หรือกดหยุดเสียงพูด
-//      - กด 2 ครั้ง: โหมดอธิบายวัตถุและทิศทางตรงหน้า
-//      - กด 3 ครั้ง: โหมดนับธนบัตรและเหรียญไทย (พูดสรุปยอดรวมขึ้นก่อนเสมอ)
-//      - กดค้างแล้วพูด (ปล่อยปุ่มเมื่อจบ): โหมดถาม-ตอบด้วยเสียงพร้อมความจำบทสนทนา 3 รอบล่าสุด
-//      - เปิดสวิตช์เครื่อง: โหมดต้อนรับ + แจ้งเปอร์เซ็นต์แบต + เชื่อมต่อ Wi-Fi อัตโนมัติ
+// ฟีเจอร์ใหม่ระดับภาค (SeeSpeak V3.7 — Architecture 2B Pro Hybrid):
+//   1. 🗣️ โหมดคุยสดไร้สัมผัส (Hands-Free Live Voice AI — Architecture 2B Pro):
+//      - เชื่อมต่อ Cloud Relay v3.7 -> Google Gemini Live API ผ่าน Binary WebSocket (เร็ว + ไม่ตัดสาย)
+//      - ล็อกภาษาไทย 100% + Jitter Pre-Buffer 320ms กันเสียงกระตุกข้ามโซน + กรองเสียงรบกวน 2 ชั้น (ไม่ลั่นตอบเองตอนเงียบ!)
+//      - กล้อง SVGA (800x600) สีสมจริง (Saturation +1) แยกสีธนบัตรไทย 20/50/100/500/1000 ได้แม่นยำ!
+//   2. 🔘 ระบบปุ่มกดความเร็วสูง Hybrid Live-First + Auto REST Fallback (ไม่ตัดสาย Live!):
+//      - กด 1 ครั้ง: โหมดอ่านข้อความ (แฟลช + XGA ผ่าน Gemini Live ~0.8-1.2 วิ / หรือกดหยุดเสียงพูด)
+//      - กด 2 ครั้ง: โหมดอธิบายวัตถุและทิศทางตรงหน้า (แฟลช + XGA ผ่าน Gemini Live)
+//      - กด 3 ครั้ง: โหมดนับธนบัตรและเหรียญไทย (แฟลช + XGA ผ่าน Gemini Live — สรุปยอดรวมขึ้นก่อนเสมอ)
+//      - กดค้างแล้วพูด (ปล่อยปุ่มเมื่อจบ): Push-to-Talk ผ่าน Gemini Live ทะลุ Noise Gate ในฮอลล์เสียงดัง + แฟลช XGA!
+//        * หากพักโหมดคุยสด (กด 5 ครั้ง) หรือ Relay ออฟไลน์ -> สลับไปยิงตรง REST API (gemini-3.5-flash-lite) อัตโนมัติ 100%!
+//      - เปิดสวิตช์เครื่อง: โหมดต้อนรับ + แจ้งเปอร์เซ็นต์แบต + เชื่อมต่อ Wi-Fi ด่วนอัตโนมัติ
 //      - กด 4 ครั้ง: เข้าโหมดตั้งค่าผ่านมือถือ "SeeSpeak-Setup"
 //      - กด 5 ครั้ง: เปิด/ปิดโหมดคุยสดไร้สัมผัส (Hands-Free Live Mode) ชั่วคราวในที่เสียงดัง
 //   3. 📡 Multi-WiFi Failover: จำชื่อ Wi-Fi ได้สูงสุด 3 เครือข่าย สลับไปตัวสำรองอัตโนมัติเมื่อเน็ตหลุด
@@ -65,19 +65,17 @@
 const char* DEFAULT_WIFI_SSID_1    = "SeeSpeak_Hotspot";
 const char* DEFAULT_WIFI_PASS_1    = "YOUR_WIFI_PASSWORD";
 const char* DEFAULT_GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"; // ใส่ Gemini API Key ของคุณที่นี่ หรือตั้งค่าผ่านหน้าเว็บ SeeSpeak-Setup
-const char* DEFAULT_RELAY_URL      = "wss://your-seespeak-relay.onrender.com/ws/seespeak"; // ใส่ URL ของ Cloud Relay ที่คุณ Deploy เองบน Render.com
+const char* DEFAULT_RELAY_URL      = "wss://your-your-seespeak-relay.onrender.com/ws/seespeak"; // ใส่ลิงก์ Cloud Relay บน Render.com ของคุณ
 
 const char* SETUP_AP_NAME = "SeeSpeak-Setup";
 
-// โมเดลสำรองโหมดปุ่มกด V2 (ยิงตรงเข้า Google ไม่ต้องพึ่ง Relay)
-const int GEMINI_MODEL_COUNT = 3;
+// โมเดลสำรองโหมดปุ่มกดเมื่อไม่ได้เชื่อม Relay (ยิงตรงเข้า Google REST API)
+const int GEMINI_MODEL_COUNT = 2;
 const char* GEMINI_ENDPOINTS[GEMINI_MODEL_COUNT] = {
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key="
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key="
 };
 const char* GEMINI_THINKING_CONFIGS[GEMINI_MODEL_COUNT] = {
-    "\"thinkingConfig\":{\"thinkingLevel\":\"minimal\"},",
     "\"thinkingConfig\":{\"thinkingLevel\":\"minimal\"},",
     "\"thinkingConfig\":{\"thinkingLevel\":\"minimal\"},"
 };
@@ -124,22 +122,26 @@ const char* GEMINI_THINKING_CONFIGS[GEMINI_MODEL_COUNT] = {
 #define CAMERA_VFLIP    0
 #define CAMERA_HMIRROR  1
 
-// Binary Protocol Opcodes สำหรับ Architecture 2B (ต้องตรงกับ relay_server/server.py)
+// Binary Protocol Opcodes สำหรับ Architecture 2B Pro (ต้องตรงกับ relay_server/server.py v3.7.0)
 #define MSG_ESP_AUDIO_PCM   0x01
 #define MSG_ESP_JPEG_CHUNK  0x02
 #define MSG_ESP_JPEG_END    0x04
 #define MSG_ESP_SPEECH_END  0x05
 #define MSG_ESP_CANCEL_AI   0x06  // สั่งหยุดเสียง AI กลางคัน (จากการพูดแทรก "หยุด/พอ" หรือกดปุ่ม 1 ครั้ง)
+#define MSG_ESP_BUTTON_CMD  0x08  // สั่งโหมดปุ่มกด (1=OCR, 2=Scene, 3=Banknote) ผ่านท่อ Live เดิมแบบไม่ตัดสาย!
 
 #define MSG_AI_AUDIO_PCM    0x10
 #define MSG_AI_SPEAK_START  0x11
 #define MSG_AI_SPEAK_END    0x12
 
-// เกณฑ์ตัวกรองเสียงรบกวนในฮอลล์แข่ง (ทำงานร่วมกับ Adaptive Noise Floor ที่วัดเสียงพัดลม/แอร์/ฮอลล์อัตโนมัติ!)
-#define DEFAULT_NOISE_GATE_RMS   380   // ขั้นต่ำในห้องเงียบ (ระบบจะขยับเกณฑ์ขึ้นอัตโนมัติหากมีเสียงพัดลม/ฮอลล์แข่ง)
-#define LIVE_SILENCE_END_MS      450   // เงียบครบ 0.45 วิ หลังพูด -> ส่งสัญญาณให้ AI ตอบทันที
-#define LIVE_MAX_SPEECH_BLOCKS   375   // จำกัดความยาวพูดต่อคำถามไม่เกิน 12 วินาที (กันค้าง 27 วิในที่เสียงดัง)
-#define LIVE_ECHO_COOLDOWN_MS    350   // พักไมค์ 350 ms หลังลำโพงหยุดพูดเพื่อกันเสียงสะท้อน
+// เกณฑ์ตัวกรองเสียงรบกวนในฮอลล์แข่ง + กันลั่นตอนเงียบ + Jitter Buffer กันเสียงกระตุก (V3.7)
+#define DEFAULT_NOISE_GATE_RMS     420   // ขั้นต่ำในห้องเงียบ (ขยับขึ้นอัตโนมัติตามพื้นเสียงพัดลม/ฮอลล์แข่ง)
+#define LIVE_MIN_VOICE_HITS        5     // ต้องมีเสียงพูดต่อเนื่อง >= 5 บล็อก (160 ms) จึงเริ่มส่ง (กันคลิก/ไอ/พัดลมลั่น 100%, Pre-Roll เก็บต้นคำครบ!)
+#define LIVE_SILENCE_END_MS        480   // เงียบครบ 0.48 วิ หลังพูด -> ส่งสัญญาณให้ AI ตอบทันที
+#define LIVE_MAX_SPEECH_BLOCKS     375   // จำกัดความยาวพูดต่อคำถามไม่เกิน 12 วินาที
+#define LIVE_ECHO_COOLDOWN_MS      500   // พักไมค์ 500 ms หลังลำโพงหยุดพูดเพื่อกันเสียงก้องห้องลั่นซ้ำ
+#define LIVE_JITTER_PRIME_BYTES    10240 // เก็บ Jitter Buffer 320 ms (5 แพ็กเก็ต) ก่อนเริ่มเล่น -> กันเสียงกระตุกข้ามโซน Oregon<->ไทย!
+#define LIVE_JITTER_REPRIME_BYTES  6400  // หากเน็ตมือถือสะดุดกลางคำ -> เก็บใหม่ 200 ms แทนการกระตุกรัวๆ
 
 // ----------------------------------------------------------------------------
 // 3. ตัวแปรระบบ, Multi-WiFi (3 ชื่อ), แบตเตอรี่ 600mAh และความจำบทสนทนา
@@ -172,6 +174,7 @@ int    noiseGateRms    = DEFAULT_NOISE_GATE_RMS;
 bool liveWsConnected                  = false;
 volatile bool liveAiSpeaking          = false;
 volatile bool liveAiStreamOpen        = false;
+volatile bool livePlaybackPrimed      = false; // รอเติม Jitter Buffer 320ms ก่อนเล่นเพื่อกันเสียงกระตุก
 volatile bool liveIgnoreAudioUntilNew = false; // ทิ้งแพ็กเก็ตค้างท่อเมื่อสั่งหยุด AI กลางคัน
 volatile unsigned long liveAiEndMs    = 0;
 unsigned long liveAiSpeakStartMs      = 0;
@@ -215,7 +218,7 @@ bool inSetupMode       = false;
 bool speechInterrupted = false;
 unsigned long lastActivityTime  = 0;
 unsigned long lastBatteryTickMs = 0;
-const unsigned long AUTO_SLEEP_TIMEOUT_MS   = 240000; // พักเครื่องเมื่อไม่ใช้งานเกิน 4 นาที
+const unsigned long AUTO_SLEEP_TIMEOUT_MS   = 600000; // พักเครื่องเมื่อไม่ใช้งานเกิน 10 นาที (ให้พร้อมโชว์กรรมการได้ต่อเนื่อง)
 const unsigned long SETUP_PORTAL_TIMEOUT_MS = 300000; // เปิดหน้าเว็บตั้งค่ารอ 5 นาที
 
 // ระบบตรวจจับและแจ้งเตือนแบตเตอรี่ 600 mAh (จำค่าข้าม Deep Sleep)
@@ -274,6 +277,7 @@ void clearLiveAudioRing() {
     liveRbTail  = 0;
     liveRbCount = 0;
     taskEXIT_CRITICAL(&liveAudioMux);
+    livePlaybackPrimed = false;
 }
 
 void pushLiveAudioRing(const uint8_t* data, size_t len) {
@@ -334,6 +338,24 @@ void liveSpeakerTask(void* param) {
     static uint8_t silenceBuf[1024] = {0};
 
     while (liveSpeakerTaskRun) {
+        size_t avail = liveRbCount;
+        if (!livePlaybackPrimed) {
+            if (avail == 0) {
+                if (!liveAiStreamOpen && liveAiSpeaking) {
+                    liveAiSpeaking = false;
+                    liveAiEndMs    = millis();
+                }
+                vTaskDelay(pdMS_TO_TICKS(5));
+                continue;
+            }
+            // รอสะสม Jitter Buffer ~320 ms (10,240 bytes) ก่อนเริ่มเล่น (ยกเว้นคำตอบสั้นที่ส่งจบแล้ว)
+            if (liveAiStreamOpen && avail < LIVE_JITTER_PRIME_BYTES) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+                continue;
+            }
+            livePlaybackPrimed = true;
+        }
+
         size_t n = popLiveAudioRing(rawBuf, sizeof(rawBuf));
         if (n >= 2 && liveTxHandle != nullptr) {
             float volScale = (float)savedVolume / 21.0f;
@@ -351,16 +373,29 @@ void liveSpeakerTask(void* param) {
             liveAiEndMs      = millis();
             lastActivityTime = millis();
         } else {
-            if (!liveAiStreamOpen && liveAiSpeaking) {
-                // ล้างท้ายเสียงด้วยความเงียบสะอาด 32ms ก่อนเปิดไมค์รับคำถามถัดไป
+            if (liveAiStreamOpen) {
+                // หากเน็ตมือถือสะดุดชั่วคราวกลางประโยค -> พักเติมเสียง 200ms แทนการกระตุกถี่ๆ
                 if (liveTxHandle != nullptr) {
                     size_t written = 0;
-                    i2s_channel_write(liveTxHandle, silenceBuf, sizeof(silenceBuf), &written, pdMS_TO_TICKS(60));
+                    i2s_channel_write(liveTxHandle, silenceBuf, sizeof(silenceBuf), &written, pdMS_TO_TICKS(40));
                 }
-                liveAiSpeaking = false;
-                liveAiEndMs    = millis();
+                unsigned long waitStart = millis();
+                while (liveSpeakerTaskRun && liveAiStreamOpen && liveRbCount < LIVE_JITTER_REPRIME_BYTES && (millis() - waitStart < 450)) {
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+            } else {
+                if (liveAiSpeaking) {
+                    // ล้างท้ายเสียงด้วยความเงียบสะอาด 32ms ก่อนเปิดไมค์รับคำถามถัดไป
+                    if (liveTxHandle != nullptr) {
+                        size_t written = 0;
+                        i2s_channel_write(liveTxHandle, silenceBuf, sizeof(silenceBuf), &written, pdMS_TO_TICKS(60));
+                    }
+                    liveAiSpeaking = false;
+                    liveAiEndMs    = millis();
+                }
+                livePlaybackPrimed = false;
+                vTaskDelay(pdMS_TO_TICKS(5));
             }
-            vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
     liveSpeakerTaskHdl = nullptr;
@@ -415,8 +450,8 @@ bool startLiveSpeakerI2S() {
     if (liveTxHandle != nullptr && liveSpeakerTaskHdl != nullptr) return true;
 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-    chan_cfg.dma_desc_num        = 8;
-    chan_cfg.dma_frame_num       = 256;
+    chan_cfg.dma_desc_num        = 12;
+    chan_cfg.dma_frame_num       = 512;
     chan_cfg.auto_clear_after_cb = true; // สำคัญมาก! เคลียร์ DMA เป็นศูนย์อัตโนมัติ กันเสียงค้างรัวๆ 100%
     if (i2s_new_channel(&chan_cfg, &liveTxHandle, nullptr) != ESP_OK) {
         Serial.println("[Live Speaker] สร้าง I2S_NUM_1 TX ไม่สำเร็จ");
@@ -445,7 +480,7 @@ bool startLiveSpeakerI2S() {
 
     clearLiveAudioRing();
     liveSpeakerTaskRun = true;
-    xTaskCreatePinnedToCore(liveSpeakerTask, "live_spk", 4096, nullptr, 2, &liveSpeakerTaskHdl, 0);
+    xTaskCreatePinnedToCore(liveSpeakerTask, "live_spk", 4096, nullptr, 3, &liveSpeakerTaskHdl, 0);
     return true;
 }
 
@@ -508,16 +543,12 @@ void loadSettings() {
     prefs.end();
 
     if (savedSSID[0].length() == 0) savedSSID[0] = DEFAULT_WIFI_SSID_1;
-    // ใช้ค่าเริ่มต้นหากยังไม่ได้ตั้งค่า API Key ใน NVS
-    if (savedApiKey.length() == 0 || savedApiKey == "YOUR_GEMINI_API_KEY") {
+    if (savedApiKey.length() == 0) {
         savedApiKey = DEFAULT_GEMINI_API_KEY;
-        prefs.begin("seespeak_v3", false);
-        prefs.putString("apikey", savedApiKey);
-        prefs.end();
     }
     if (savedVolume < 6 || savedVolume > 21) savedVolume = DEFAULT_SPEAKER_VOLUME;
-    // อัปเกรดค่า Noise Gate เก่า (650) เป็นค่าใหม่ที่รับเสียงพูดได้ไวและชัดขึ้น (380) อัตโนมัติ
-    if (noiseGateRms == 650 || noiseGateRms < 200 || noiseGateRms > 2500) {
+    // อัปเกรดค่า Noise Gate เก่า (650 หรือ 380) เป็นค่าใหม่ V3.7 (420) ที่กันคลิก/พัดลมลั่นแต่ยังรับเสียงพูดได้ไว
+    if (noiseGateRms == 650 || noiseGateRms == 380 || noiseGateRms < 200 || noiseGateRms > 2500) {
         noiseGateRms = DEFAULT_NOISE_GATE_RMS;
         prefs.begin("seespeak_v3", false);
         prefs.putInt("ngate", noiseGateRms);
@@ -761,16 +792,23 @@ bool tryConnectSingleWiFi(const String& ssid, const String& pass, unsigned long 
     return false;
 }
 
-bool connectBestWiFi(unsigned long perNetworkTimeoutMs = 6500) {
+bool connectBestWiFi(unsigned long perNetworkTimeoutMs = 5500) {
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
 
-    // สแกนเครือข่ายรอบข้างเพื่อลองต่อเฉพาะชื่อที่เจอสัญญาณจริงก่อน (ประหยัดเวลาไม่รอตัวที่ไม่อยู่ในพื้นที่)
-    int foundCount = WiFi.scanNetworks();
-    bool tried[3] = {false, false, false};
+    // 1. ลองต่อ Wi-Fi หลักทันทีโดยไม่เสียเวลารอสแกน (~2.5 วิ) -> บูตเชื่อมไวสุด!
+    if (savedSSID[0].length() > 0) {
+        if (tryConnectSingleWiFi(savedSSID[0], savedPass[0], min(perNetworkTimeoutMs, 4500UL))) {
+            return true;
+        }
+    }
 
-    for (int slot = 0; slot < 3; slot++) {
+    // 2. หาก Wi-Fi หลักไม่ติด ค่อยสแกนหาเครือข่ายสำรองที่อยู่ในพื้นที่จริง (Multi-WiFi Failover)
+    int foundCount = WiFi.scanNetworks();
+    bool tried[3] = {true, false, false};
+
+    for (int slot = 1; slot < 3; slot++) {
         if (savedSSID[slot].length() == 0) continue;
         bool visible = false;
         for (int i = 0; i < foundCount; i++) {
@@ -787,10 +825,10 @@ bool connectBestWiFi(unsigned long perNetworkTimeoutMs = 6500) {
         }
     }
 
-    // เผื่อฮอตสปอตซ่อนชื่อ (Hidden SSID) ให้ลองชื่อที่ยังไม่ได้ลอง
-    for (int slot = 0; slot < 3; slot++) {
+    // เผื่อฮอตสปอตสำรองซ่อนชื่อ (Hidden SSID)
+    for (int slot = 1; slot < 3; slot++) {
         if (!tried[slot] && savedSSID[slot].length() > 0) {
-            if (tryConnectSingleWiFi(savedSSID[slot], savedPass[slot], 4500)) {
+            if (tryConnectSingleWiFi(savedSSID[slot], savedPass[slot], 4000)) {
                 return true;
             }
         }
@@ -1057,52 +1095,51 @@ bool initCamera() {
 
         if (s->id.PID == OV5640_PID) {
             detectedCamName = "OV5640 5MP";
-            Serial.println("[Camera] ปรับจูนโปรไฟล์เฉพาะสำหรับ OV5640 5MP (68° Fixed Focus)");
+            Serial.println("[Camera] ปรับจูนโปรไฟล์เฉพาะสำหรับ OV5640 5MP (สีตรงธนบัตร + คมชัด)");
             s->set_brightness(s, 0);
             s->set_contrast(s, 1);
-            s->set_saturation(s, 0);
+            s->set_saturation(s, 1); // สีสดชัดเจนสำหรับแยกธนบัตรไทย (เขียว/ฟ้า/แดง/ม่วง/เทา)
             s->set_sharpness(s, 2);
             s->set_gainceiling(s, GAINCEILING_4X);
         } else if (s->id.PID == OV3660_PID) {
             detectedCamName = "OV3660 3MP";
-            Serial.println("[Camera] ปรับจูนโปรไฟล์สำหรับ OV3660 3MP");
-            s->set_brightness(s, 1);
+            Serial.println("[Camera] ปรับจูนโปรไฟล์สำหรับ OV3660 3MP (แก้สีเพี้ยนธนบัตร Saturation=+1)");
+            s->set_brightness(s, 0);
             s->set_contrast(s, 1);
-            s->set_saturation(s, -2);
-            s->set_sharpness(s, 1);
+            s->set_saturation(s, 1); // แก้บั๊กเดิม (-2 ทำให้แบงก์ 20 สีเขียวซีดเป็นสีเทาน้ำตาลเหมือนแบงก์ 1000!)
+            s->set_sharpness(s, 2);
             s->set_gainceiling(s, GAINCEILING_4X);
         }
 
-        // พักความละเอียดเริ่มต้นที่ VGA (640x480) ลดการใช้บัส PSRAM ลง 6 เท่า (กัน FB-OVF และส่งภาพแรกไว < 12 KB)
-        // และจะสลับขึ้น UXGA (1600x1200) อัตโนมัติเฉพาะตอนกดปุ่มโหมด OCR/ธนบัตร
-        s->set_framesize(s, FRAMESIZE_VGA);
-        s->set_quality(s, 15);
+        // พักความละเอียดที่ SVGA (800x600 quality 10) -> ภาพคมชัดกว่า VGA มาก เห็นเลขบนธนบัตรและตัวอักษรชัดขึ้น 2 เท่า!
+        s->set_framesize(s, FRAMESIZE_SVGA);
+        s->set_quality(s, 10);
     }
     return true;
 }
 
-camera_fb_t* captureSmartPhoto(bool highResMode = true) {
+camera_fb_t* captureSmartPhoto(bool highResMode = true, bool useFlash = true, framesize_t targetHighRes = FRAMESIZE_UXGA) {
     sensor_t* s = esp_camera_sensor_get();
     bool resized = false;
     if (s != nullptr) {
-        framesize_t target = highResMode ? FRAMESIZE_UXGA : FRAMESIZE_VGA;
+        framesize_t target = highResMode ? targetHighRes : FRAMESIZE_SVGA;
+        int targetQ = highResMode ? ((targetHighRes == FRAMESIZE_UXGA) ? 12 : 10) : 10;
         if (s->status.framesize != target) {
             s->set_framesize(s, target);
-            s->set_quality(s, highResMode ? 12 : 18);
             resized = true;
         }
+        s->set_quality(s, targetQ);
     }
 
-    if (highResMode) {
+    if (useFlash) {
         digitalWrite(PIN_FLASH_LED, HIGH);
-        delay(120);
+        delay(resized ? 140 : 100);
         for (int i = 0; i < 2; i++) {
             camera_fb_t* flush_fb = esp_camera_fb_get();
             if (flush_fb != nullptr) esp_camera_fb_return(flush_fb);
-            delay(40);
+            delay(35);
         }
     } else {
-        // ทิ้งเฟรมค้างในบัฟเฟอร์ (รอ 70ms + ทิ้ง 2 เฟรมเมื่อเพิ่งสลับ UXGA -> VGA เพื่อให้ได้ภาพ VGA ขนาดเล็กตั้งแต่เฟรมแรก)
         if (resized) delay(70);
         int flushCount = resized ? 2 : 1;
         for (int i = 0; i < flushCount; i++) {
@@ -1149,9 +1186,14 @@ float processHallAudioBlock(int16_t* samples, size_t count) {
         samples[i] = (int16_t)amplified;
     }
 
-    // ปรับค่า AGC Gain นุ่มนวลตามความดังเสียงพูดจริง (ช่วง 2.0x ถึง 5.0x เพื่อไม่เร่งเสียงพัดลมขึ้นมาเหนือเกณฑ์พูด!)
-    if (peak > 24000.0f && agcGain > 2.0f) agcGain -= 0.18f;
-    else if (peak < 9000.0f && agcGain < 5.0f) agcGain += 0.04f;
+    // ปรับค่า AGC Gain เฉพาะช่วงที่มีเสียงพูดจริง (ตอนเงียบล็อกไว้ที่ 2.8x ไม่ให้เร่งเสียงพัดลมขึ้นมาลั่นเอง!)
+    if (peak > 24000.0f && agcGain > 1.8f) {
+        agcGain -= 0.18f;
+    } else if (peak >= 1800.0f && peak < 9000.0f && agcGain < 4.5f) {
+        agcGain += 0.04f;
+    } else if (peak < 1800.0f && agcGain > 2.8f) {
+        agcGain -= 0.02f;
+    }
 
     return (float)sqrt(sumSq / (double)count);
 }
@@ -1159,10 +1201,15 @@ float processHallAudioBlock(int16_t* samples, size_t count) {
 // ----------------------------------------------------------------------------
 // 13. โหมดคุยสดไร้สัมผัส (Architecture 2B: Binary WebSocket -> Cloud Relay -> Gemini Live API)
 // ----------------------------------------------------------------------------
-void sendLiveJpegFrame() {
-    if (!liveWsConnected) return;
-    camera_fb_t* fb = captureSmartPhoto(false); // VGA 640x480 ส่งไวมาก (< 100 ms)
-    if (!fb) return;
+bool sendLiveJpegFrame(bool highResWithFlash = false) {
+    if (!liveWsConnected) return false;
+    camera_fb_t* fb = highResWithFlash
+        ? captureSmartPhoto(true, true, FRAMESIZE_XGA)   // โหมดปุ่มกด: เปิดแฟลช + XGA (1024x768) คมกริบ!
+        : captureSmartPhoto(false, false, FRAMESIZE_SVGA); // โหมดคุยสด: SVGA (800x600) คมชัดและเร็ว!
+    if (!fb || fb->len < 2000) {
+        if (fb) esp_camera_fb_return(fb);
+        return false;
+    }
 
     const size_t MAX_CHUNK = 7500;
     static uint8_t txBuf[MAX_CHUNK + 1];
@@ -1173,11 +1220,23 @@ void sendLiveJpegFrame() {
         txBuf[0] = isLast ? MSG_ESP_JPEG_END : MSG_ESP_JPEG_CHUNK;
         memcpy(txBuf + 1, fb->buf + sent, chunkLen);
         liveWS.sendBIN(txBuf, chunkLen + 1);
+        liveWS.loop(); // ปั๊ม WebSocket ระหว่างส่งภาพ กันสายค้าง/เสียงกระตุก
         sent += chunkLen;
     }
-    Serial.printf("[Live 2B] ส่งภาพสด %s (%u bytes) ขึ้น Relay สำเร็จ\n", detectedCamName.c_str(), fb->len);
+    Serial.printf("[Live 2B] ส่งภาพ%s %s (%u bytes) ขึ้น Relay สำเร็จ\n",
+                  highResWithFlash ? "คมชัดสูง+แฟลช XGA" : "สด SVGA",
+                  detectedCamName.c_str(), fb->len);
     esp_camera_fb_return(fb);
+
+    // หลังส่งภาพ XGA โหมดปุ่มกด ให้สลับกล้องพักที่ SVGA ทันทีเพื่อประหยัดบัส PSRAM
+    if (highResWithFlash) {
+        if (sensor_t* s = esp_camera_sensor_get()) {
+            s->set_framesize(s, FRAMESIZE_SVGA);
+            s->set_quality(s, 10);
+        }
+    }
     liveLastFrameMs = millis();
+    return true;
 }
 
 void cancelLiveAiSpeech(const char* reason) {
@@ -1213,14 +1272,14 @@ void onLiveWsEvent(WStype_t type, uint8_t* payload, size_t length) {
             clearLiveAudioRing();
             liveConnectedMs  = millis();
             liveFailStreak   = 0;
-            liveWS.setReconnectInterval(4000);
-            Serial.println("[Live 2B] เชื่อมต่อ Cloud Relay -> Gemini Live API สำเร็จ! พูดถามได้เลยไม่ต้องกดปุ่ม");
+            liveWS.setReconnectInterval(1500); // เชื่อมใหม่เร็ว 1.5 วินาทีหากสัญญาณสะดุด
+            Serial.println("[Live 2B] เชื่อมต่อ Cloud Relay v3.7 -> Gemini Live API สำเร็จ! พูดถามได้เลยไม่ต้องกดปุ่ม");
             if (!liveAnnouncedConnect) {
                 liveAnnouncedConnect = true;
                 vibrate(1, 90, 0);
             }
-            // ส่งภาพมุมมองแรกขึ้นไปทันทีเพื่อให้ AI เห็นสิ่งตรงหน้าล่วงหน้า
-            sendLiveJpegFrame();
+            // ส่งภาพมุมมองแรก SVGA ขึ้นไปทันทีเพื่อให้ AI เห็นสิ่งตรงหน้าล่วงหน้า
+            sendLiveJpegFrame(false);
             break;
 
         case WStype_DISCONNECTED: {
@@ -1238,8 +1297,8 @@ void onLiveWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                 Serial.println("[Live 2B] พักท่อคุยสดชั่วคราว (สลับไปทำงานโหมดปุ่มกด)");
             } else if (wasStable) {
                 liveFailStreak = 0;
-                liveWS.setReconnectInterval(4000);
-                Serial.println("[Live 2B] การเชื่อมต่อ Relay หลุด (กำลังลองต่อใหม่อัตโนมัติ...)");
+                liveWS.setReconnectInterval(1500);
+                Serial.println("[Live 2B] การเชื่อมต่อ Relay หลุด (กำลังลองต่อใหม่อัตโนมัติใน 1.5 วิ...)");
             } else {
                 liveFailStreak++;
                 if (liveFailStreak >= 3) {
@@ -1329,7 +1388,7 @@ void startLiveModeIfConfigured() {
             for (int i = 0; i < 8; i++) livePdmMic.readBytes(dummy, sizeof(dummy));
             hpfPrevIn = 0.0f;
             hpfPrevOut = 0.0f;
-            agcGain = 3.8f;
+            agcGain = 2.6f;
             ambientNoiseRms = 260.0f;
             liveTurnPeakRms = 0.0f;
             liveVoiceHitCount = 0;
@@ -1347,8 +1406,8 @@ void startLiveModeIfConfigured() {
     liveAnnouncedConnect   = false;
     liveExpectedDisconnect = false;
     liveWS.onEvent(onLiveWsEvent);
-    liveWS.setReconnectInterval(4000);
-    liveWS.enableHeartbeat(25000, 15000, 4); // ขยายเวลา Pong เป็น 15 วิ รองรับฮอตสปอตมือถือและคำตอบยาวๆ นิ่งสุด!
+    liveWS.setReconnectInterval(1500);
+    liveWS.enableHeartbeat(20000, 15000, 4); // ปิงทุก 20 วิ รอ Pong 15 วิ รองรับ 4G มือถือและไม่ตัดสายง่าย!
     Serial.printf("[Live 2B] กำลังเชื่อม Relay %s:%u%s\n", host.c_str(), port, path.c_str());
 }
 
@@ -1372,14 +1431,28 @@ void stopLiveMode() {
 
 void serviceLiveHandsFreeLoop() {
     if (!handsFreeEnabled || savedRelayUrl.length() < 8 || WiFi.status() != WL_CONNECTED) return;
-    liveWS.loop();
+
+    // ปั๊ม WebSocket หลายรอบเมื่อ AI กำลังพูดเพื่อดูดแพ็กเก็ตเสียงลง PSRAM Ring Buffer ทันที (แก้เสียงกระตุก!)
+    int wsPump = (liveAiSpeaking || liveAiStreamOpen) ? 6 : 2;
+    for (int i = 0; i < wsPump; i++) {
+        liveWS.loop();
+    }
 
     if (!liveWsConnected || !liveMicRunning) return;
 
-    // 1. อ่านเสียงจากไมค์ PDM ทีละ 512 samples (1024 bytes = 32 ms @ 16kHz)
+    // 1. อ่านเสียงจากไมค์ PDM: ขณะ AI พูดอ่านทีละ 512 bytes (16ms) เพื่อไม่บล็อก Core 1 นานจนรับแพ็กเก็ตเสียงไม่ทัน!
     static uint8_t audioPacket[1025];
     int16_t* samples = (int16_t*)(audioPacket + 1);
-    size_t bytesRead = livePdmMic.readBytes((char*)samples, 1024);
+    size_t reqBytes = (liveAiSpeaking || liveAiStreamOpen) ? 512 : 1024;
+    size_t bytesRead = livePdmMic.readBytes((char*)samples, reqBytes);
+
+    // ปั๊ม WebSocket อีกรอบทันทีหลังอ่านไมค์จบ
+    if (liveAiSpeaking || liveAiStreamOpen) {
+        for (int i = 0; i < 4; i++) liveWS.loop();
+    } else {
+        liveWS.loop();
+    }
+
     if (bytesRead < 256) return;
 
     // 2. ผ่านตัวกรองเสียงรบกวนในฮอลล์แข่ง (HPF 250Hz + AGC + วัดความดัง RMS)
@@ -1391,15 +1464,15 @@ void serviceLiveHandsFreeLoop() {
         preRollIdx        = 0;
         liveVoiceHitCount = 0;
         unsigned long speakingFor = millis() - liveAiSpeakStartMs;
-        if (speakingFor < 600) {
-            // ช่วง 0.6 วินาทีแรก เรียนรู้ระดับเสียงสะท้อนของลำโพงเองที่ระดับความดังปัจจุบัน
+        if (speakingFor < 650) {
+            // ช่วง 0.65 วินาทีแรก เรียนรู้ระดับเสียงสะท้อนของลำโพงเองที่ระดับความดังปัจจุบัน
             if (rms > liveEchoPeakRms) liveEchoPeakRms = rms;
         } else {
-            // หลัง 0.6 วิ หากเสียงผู้ใช้ดังทะลุเสียงสะท้อนของลำโพง (≥ 1.65 เท่า และ ≥ 1500 RMS) ต่อเนื่อง ~128 ms -> สั่งหยุดทันที!
-            float bargeThreshold = max(1500.0f, liveEchoPeakRms * 1.65f);
+            // หลัง 0.65 วิ หากเสียงผู้ใช้ดังทะลุเสียงสะท้อนของลำโพง (≥ 1.7 เท่า และ ≥ 1600 RMS) ต่อเนื่อง ~112 ms (7x16ms) -> สั่งหยุดทันที!
+            float bargeThreshold = max(1600.0f, liveEchoPeakRms * 1.70f);
             if (rms >= bargeThreshold) {
                 liveBargeHitCount++;
-                if (liveBargeHitCount >= 4) {
+                if (liveBargeHitCount >= 7) {
                     cancelLiveAiSpeech("ตรวจพบเสียงพูดแทรก (Voice Barge-In)");
                 }
             } else {
@@ -1409,7 +1482,7 @@ void serviceLiveHandsFreeLoop() {
         return;
     }
 
-    // ช่วงพักกันเสียงสะท้อนหลังลำโพงหยุดพูด (350 ms)
+    // ช่วงพักกันเสียงสะท้อนหลังลำโพงหยุดพูด (500 ms)
     if (millis() - liveAiEndMs < LIVE_ECHO_COOLDOWN_MS) {
         preRollFilled     = 0;
         preRollIdx        = 0;
@@ -1417,31 +1490,32 @@ void serviceLiveHandsFreeLoop() {
         return;
     }
 
-    // 4. Adaptive Noise Floor: เรียนรู้พื้นเสียงรบกวนจริง (พัดลม/แอร์/ฮอลล์แข่ง) ตลอดเวลา เพื่อปิดคำพูดไวใน 0.45 วิ ไม่ค้าง 20 วิ!
+    // 4. Adaptive Noise Floor: เรียนรู้พื้นเสียงรบกวนจริง (พัดลม/แอร์/ฮอลล์แข่ง) เพื่อไม่ให้ลั่นตอบเองตอนเงียบ!
     if (!liveUserSpeaking) {
         if (rms < ambientNoiseRms * 1.45f) {
             ambientNoiseRms = ambientNoiseRms * 0.94f + rms * 0.06f;
         } else {
-            ambientNoiseRms = ambientNoiseRms * 0.995f + rms * 0.005f;
+            ambientNoiseRms = ambientNoiseRms * 0.992f + rms * 0.008f;
         }
-        ambientNoiseRms = constrain(ambientNoiseRms, 120.0f, 1500.0f);
+        ambientNoiseRms = constrain(ambientNoiseRms, 130.0f, 1600.0f);
     }
 
-    float startThresh = max((float)noiseGateRms, ambientNoiseRms * 2.0f + 150.0f);
-    float holdThresh  = max((float)noiseGateRms * 0.85f, ambientNoiseRms * 1.45f + 95.0f);
+    // เกณฑ์เริ่มพูดเข้มงวดขึ้น (2.4x + 220 RMS และต้องดังต่อเนื่อง >= 160 ms) ป้องกันเสียงลม/พัดลม/คลิก ลั่นถาม AI ซ้ำ!
+    float startThresh = max((float)noiseGateRms, ambientNoiseRms * 2.4f + 220.0f);
+    float holdThresh  = max((float)noiseGateRms * 0.85f, ambientNoiseRms * 1.55f + 110.0f);
     bool isSpeechNow  = liveUserSpeaking ? (rms >= holdThresh) : (rms >= startThresh);
 
     if (isSpeechNow) {
         liveVoiceHitCount++;
         if (rms > liveTurnPeakRms) liveTurnPeakRms = rms;
         if (!liveUserSpeaking) {
-            // เก็บลง Pre-Roll ระหว่างรอครบ 2 บล็อก (64 ms) เพื่อให้พยางค์แรกไม่หายแม้แต่นิดเดียว!
+            // เก็บลง Pre-Roll ระหว่างรอครบ 5 บล็อก (160 ms) เพื่อให้พยางค์แรกครบถ้วนและกรองเสียงกระแทกสั้นๆ ทิ้ง!
             memcpy(preRollBuf[preRollIdx], samples, bytesRead);
             preRollLens[preRollIdx] = bytesRead;
             preRollIdx = (preRollIdx + 1) % PRE_ROLL_BLOCKS;
             if (preRollFilled < PRE_ROLL_BLOCKS) preRollFilled++;
 
-            if (liveVoiceHitCount >= 2) {
+            if (liveVoiceHitCount >= LIVE_MIN_VOICE_HITS) {
                 liveUserSpeaking         = true;
                 liveFrameCapturedForTurn = false;
                 liveSpokenBlocks         = 0;
@@ -1472,7 +1546,7 @@ void serviceLiveHandsFreeLoop() {
             if (liveSpokenBlocks >= LIVE_MAX_SPEECH_BLOCKS) {
                 liveUserSpeaking         = false;
                 liveFrameCapturedForTurn = false;
-                if (millis() - liveLastFrameMs > 900) sendLiveJpegFrame();
+                if (millis() - liveLastFrameMs > 250) sendLiveJpegFrame(false);
                 uint8_t endSig[1] = { MSG_ESP_SPEECH_END };
                 liveWS.sendBIN(endSig, 1);
                 Serial.printf("[Live 2B] พูดครบระยะสูงสุด (%d บล็อก, พื้นเสียง=%.0f, พีค=%.0f) -> ส่งให้ AI ตอบ!\n",
@@ -1495,11 +1569,11 @@ void serviceLiveHandsFreeLoop() {
             liveSpokenBlocks++;
 
             unsigned long silentFor = millis() - liveLastVoiceMs;
-            // เทคนิคตอบไวสุด: ถ่ายภาพสด VGA (~60ms) ซ้อนทับในช่วงเงียบ 200ms แทนที่จะรอจบ 450ms ค่อยถ่าย
-            if (!liveFrameCapturedForTurn && silentFor >= 200) {
+            // ถ่ายภาพสด SVGA คมชัด (สีสมจริง) ซ้อนทับในช่วงเงียบ 150ms เพื่อให้ AI เห็นวัตถุ/ธนบัตรล่าสุดเป๊ะ!
+            if (!liveFrameCapturedForTurn && silentFor >= 150) {
                 liveFrameCapturedForTurn = true;
-                if (millis() - liveLastFrameMs > 900) {
-                    sendLiveJpegFrame();
+                if (millis() - liveLastFrameMs > 250) {
+                    sendLiveJpegFrame(false);
                 }
             }
             if (silentFor >= LIVE_SILENCE_END_MS) {
@@ -1622,7 +1696,7 @@ void processWithGemini(const char* modePrompt, String base64AudioWav = "", bool 
 
     rtcUsedMah += (base64AudioWav.length() > 0) ? 1.5f : 1.2f;
 
-    camera_fb_t* fb = captureSmartPhoto(true);
+    camera_fb_t* fb = captureSmartPhoto(true, true, FRAMESIZE_UXGA);
     if (!fb || fb->len < 4500) {
         if (fb) esp_camera_fb_return(fb);
         speakThai("ภาพมืดเกินไปหรือมีนิ้วบังหน้ากล้อง กรุณากดใหม่อีกครั้งค่ะ");
@@ -1633,10 +1707,10 @@ void processWithGemini(const char* modePrompt, String base64AudioWav = "", bool 
 
     String base64Image = base64::encode(fb->buf, fb->len);
     esp_camera_fb_return(fb);
-    // ลดความละเอียดกล้องกลับเป็น VGA พักไว้ทันทีหลังถ่ายภาพ UXGA เสร็จ (กัน cam_hal: FB-OVF)
+    // สลับกล้องพักไว้ที่ SVGA คมชัด (ประหยัดบัส PSRAM และพร้อมสำหรับ Live ทันที)
     if (sensor_t* s = esp_camera_sensor_get()) {
-        s->set_framesize(s, FRAMESIZE_VGA);
-        s->set_quality(s, 18);
+        s->set_framesize(s, FRAMESIZE_SVGA);
+        s->set_quality(s, 10);
     }
 
     String fullPrompt = String(modePrompt);
@@ -1700,7 +1774,94 @@ void processWithGemini(const char* modePrompt, String base64AudioWav = "", bool 
     if (wasLiveActive) startLiveModeIfConfigured();
 }
 
+// สั่งงานปุ่มกดโหมด 1/2/3 แบบ Hybrid Live-First:
+// - หากเชื่อม Gemini Live อยู่: ถ่ายภาพคมชัดสูง+แฟลช XGA แล้วส่งเข้าท่อ Live ทันที (~0.8-1.2 วิ ไม่ตัดสาย เสียงน่ารักคนเดิม!)
+// - หากพักโหมด Live (กด 5 ครั้ง) หรือ Relay ออฟไลน์: สลับไปยิงตรง Gemini REST API อัตโนมัติ 100%!
+void triggerLiveButtonMode(uint8_t modeId, const char* fallbackPrompt) {
+    lastActivityTime = millis();
+    if (handsFreeEnabled && liveWsConnected) {
+        if (liveAiSpeaking) {
+            cancelLiveAiSpeech("กดเปลี่ยนโหมดปุ่มกด");
+            unsigned long waitStart = millis();
+            while (millis() - waitStart < 40) { liveWS.loop(); delay(5); }
+        }
+        liveUserSpeaking         = false;
+        liveFrameCapturedForTurn = false;
+        liveVoiceHitCount        = 0;
+        preRollFilled            = 0;
+        preRollIdx               = 0;
+
+        rtcUsedMah += 0.9f;
+        if (sendLiveJpegFrame(true) && liveWsConnected) {
+            uint8_t cmd[2] = { MSG_ESP_BUTTON_CMD, modeId };
+            liveWS.sendBIN(cmd, 2);
+            liveWS.loop();
+            vibrate(1, 50, 0);
+            Serial.printf("[Live 2B] สั่งโหมดปุ่มกด %u ผ่าน Gemini Live (แฟลช+XGA ไม่ตัดสาย!)\n", modeId);
+            return;
+        }
+        Serial.printf("[Live 2B] ส่งภาพโหมด %u ไม่สำเร็จ -> สลับไปใช้ REST Fallback อัตโนมัติ\n", modeId);
+    }
+    processWithGemini(fallbackPrompt);
+}
+
 void handleVoiceQAMode() {
+    lastActivityTime = millis();
+    // 1. Live Push-to-Talk (Zero-Disconnect): กดค้างส่งเสียงสดตรงเข้า Gemini Live ทะลุ Noise Gate + แฟลช XGA ตอนปล่อยปุ่ม!
+    if (handsFreeEnabled && liveWsConnected && liveMicRunning) {
+        if (liveAiSpeaking) {
+            cancelLiveAiSpeech("กดค้างถามใหม่");
+            unsigned long waitStart = millis();
+            while (millis() - waitStart < 40) { liveWS.loop(); delay(5); }
+        }
+        liveUserSpeaking         = false;
+        liveFrameCapturedForTurn = false;
+        liveVoiceHitCount        = 0;
+        preRollFilled            = 0;
+        preRollIdx               = 0;
+
+        vibrate(1, 100, 0);
+        delay(25);
+        // ทิ้งเสียงมอเตอร์สั่น 2 บล็อกก่อนเริ่มส่งเสียงพูดจริง
+        static uint8_t pttPacket[1025];
+        int16_t* samples = (int16_t*)(pttPacket + 1);
+        for (int i = 0; i < 2; i++) livePdmMic.readBytes((char*)samples, 1024);
+
+        unsigned long recStart = millis();
+        size_t totalSentBytes = 0;
+        while (millis() - recStart < MIC_MAX_MS && liveWsConnected) {
+            liveWS.loop();
+            if (digitalRead(PIN_BUTTON) == HIGH) {
+                delay(15);
+                if (digitalRead(PIN_BUTTON) == HIGH) break;
+            }
+            size_t bytesRead = livePdmMic.readBytes((char*)samples, 1024);
+            if (bytesRead >= 256) {
+                processHallAudioBlock(samples, bytesRead / 2);
+                pttPacket[0] = MSG_ESP_AUDIO_PCM;
+                liveWS.sendBIN(pttPacket, bytesRead + 1);
+                totalSentBytes += bytesRead;
+            }
+        }
+        if (totalSentBytes >= 4800 && liveWsConnected) {
+            rtcUsedMah += 1.0f;
+            sendLiveJpegFrame(true); // แชะภาพคมชัดสูง+แฟลช XGA ตรงจังหวะปล่อยปุ่ม!
+            uint8_t endSig[1] = { MSG_ESP_SPEECH_END };
+            liveWS.sendBIN(endSig, 1);
+            liveWS.loop();
+            vibrate(1, 50, 0);
+            Serial.printf("[Live 2B] Push-to-Talk ส่งเสียง %u bytes + ภาพแฟลช XGA สำเร็จ!\n", (unsigned)totalSentBytes);
+            return;
+        }
+        if (liveWsConnected) {
+            // กดสั้นเกินไปจนยังไม่ได้พูดอะไร
+            uint8_t endSig[1] = { MSG_ESP_SPEECH_END };
+            liveWS.sendBIN(endSig, 1);
+            return;
+        }
+    }
+
+    // 2. Auto REST Fallback เมื่อพักโหมด Live หรือ Relay ออฟไลน์
     bool wasLiveActive = (handsFreeEnabled && savedRelayUrl.length() >= 8);
     if (wasLiveActive) stopLiveMode();
     if (!ensureWiFiConnected()) return;
@@ -1797,9 +1958,9 @@ void setup() {
             vibrate(2, 100, 80);
             String msg = "สวัสดีค่ะ แว่นตาอัจฉริยะซีสปีคพร้อมใช้งาน แบตเตอรี่คงเหลือ " + String(batPct) + " เปอร์เซ็นต์ ";
             if (handsFreeEnabled && savedRelayUrl.length() >= 8) {
-                msg += "เปิดโหมดคุยสดไร้สัมผัสแล้ว สามารถพูดถามโต้ตอบสดๆ ได้เลยโดยไม่ต้องกดปุ่ม หรือกดปุ่มหนึ่งครั้งเพื่ออ่านข้อความ กดสองครั้งเพื่ออธิบายวัตถุ กดสามครั้งเพื่อนับธนบัตร กดค้างพร้อมพูดเพื่อถามตอบ และกดห้าครั้งเพื่อเปิดหรือพักโหมดคุยสดค่ะ";
+                msg += "เปิดโหมดคุยสดไร้สัมผัสแล้ว พูดถามได้เลย หรือกดปุ่ม 1 ครั้งอ่านข้อความ 2 ครั้งอธิบายวัตถุ 3 ครั้งนับธนบัตร กดค้างถามตอบค่ะ";
             } else {
-                msg += "กดปุ่มหนึ่งครั้งเพื่ออ่านข้อความ กดสองครั้งเพื่ออธิบายวัตถุ กดสามครั้งเพื่อนับธนบัตร และกดค้างพร้อมพูดเพื่อถามตอบค่ะ";
+                msg += "กดปุ่ม 1 ครั้งอ่านข้อความ 2 ครั้งอธิบายวัตถุ 3 ครั้งนับธนบัตร และกดค้างพร้อมพูดเพื่อถามตอบค่ะ";
             }
             speakThai(msg);
         }
@@ -1835,18 +1996,18 @@ void loop() {
             // หน่วงกันเผลอกดซ้ำหลังหยุด AI ไม่ให้หลุดไปสั่งโหมด OCR โดยไม่ตั้งใจ
             Serial.println("[Live 2B] ข้ามการกดซ้ำหลังหยุดเสียง AI");
         } else {
-            vibrate(1, 100, 0);
-            delay(180);
-            processWithGemini(PROMPT_MODE_1_OCR);
+            vibrate(1, 90, 0);
+            delay(140);
+            triggerLiveButtonMode(1, PROMPT_MODE_1_OCR);
         }
     } else if (action == 2) {
-        vibrate(2, 100, 80);
-        delay(180);
-        processWithGemini(PROMPT_MODE_2_SCENE);
+        vibrate(2, 90, 70);
+        delay(140);
+        triggerLiveButtonMode(2, PROMPT_MODE_2_SCENE);
     } else if (action == 3) {
-        vibrate(3, 100, 80);
-        delay(180);
-        processWithGemini(PROMPT_MODE_3_BANKNOTE);
+        vibrate(3, 90, 70);
+        delay(140);
+        triggerLiveButtonMode(3, PROMPT_MODE_3_BANKNOTE);
     } else if (action == 4) {
         handleVoiceQAMode();
     } else if (action == 5) {
