@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets & local env
+.env
+.env.*
+*secrets*.h
+*credentials*.json
+
+# Office / Word temporary & lock files
+~$*
+~WRL*
+*.tmp
+
+# Blender backup files
+*.blend1
+*.blend2
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

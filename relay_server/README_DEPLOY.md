@@ -18,12 +18,12 @@
    * **Instance Type:** `Free`
 5. กดแท็บ **Environment Variables** แล้วเพิ่มตัวแปร:
    * `GEMINI_API_KEY` = *(วาง Gemini API Key ของคุณจาก aistudio.google.com)*
-   * `GEMINI_VOICE_NAME` = `Aoede` *(เสียงผู้หญิงไทยสุภาพ)*
-6. กด **Create Web Service** รอประมาณ 2 นาที จะได้ลิงก์เช่น `https://seespeak-relay.onrender.com`
-   * ทดสอบเปิด `https://seespeak-relay.onrender.com/health` ในเบราว์เซอร์ ถ้าขึ้น `"status": "ok"` แปลว่าพร้อมใช้งาน 100%!
-7. นำ URL ของ WebSocket คือ **`wss://seespeak-relay.onrender.com/ws/seespeak`** ไปกรอกในหน้าเว็บตั้งค่า **`SeeSpeak-Setup`** ของแว่น (ช่อง "Cloud Relay URL") แล้วกดบันทึกได้เลย!
+   * `GEMINI_VOICE_NAME` = `Laomedeia` *(เสียงผู้หญิงวัยรุ่นน่ารัก สดใส)*
+6. กด **Create Web Service** รอประมาณ 2 นาที จะได้ลิงก์เช่น `https://your-seespeak-relay.onrender.com`
+   * ทดสอบเปิด `https://your-seespeak-relay.onrender.com/health` ในเบราว์เซอร์ ถ้าขึ้น `"status": "ok"` แปลว่าพร้อมใช้งาน 100%!
+7. นำ URL ของ WebSocket คือ **`wss://your-seespeak-relay.onrender.com/ws/seespeak`** ไปกรอกในหน้าเว็บตั้งค่า **`SeeSpeak-Setup`** ของแว่น (ช่อง "Cloud Relay URL") แล้วกดบันทึกได้เลย!
 
-> 💡 **เคล็ดลับวันแข่ง:** Render แพ็กเกจฟรีจะหลับถ้าไม่มีคนเรียกเกิน 15 นาที ก่อนขึ้นเวทีโชว์กรรมการให้เปิดลิงก์ `https://seespeak-relay.onrender.com/health` บนมือถือไว้ 1 ครั้งก่อนเปิดแว่นเพื่อให้เซิร์ฟเวอร์ตื่นพร้อมทำงานทันที!
+> 💡 **เคล็ดลับวันแข่ง:** Render แพ็กเกจฟรีจะหลับถ้าไม่มีคนเรียกเกิน 15 นาที ก่อนขึ้นเวทีโชว์กรรมการให้เปิดลิงก์ `https://your-seespeak-relay.onrender.com/health` บนมือถือไว้ 1 ครั้งก่อนเปิดแว่นเพื่อให้เซิร์ฟเวอร์ตื่นพร้อมทำงานทันที!
 
 ---
 
